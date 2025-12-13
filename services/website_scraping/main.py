@@ -8,7 +8,8 @@ import os
 import logging
 from dotenv import load_dotenv
 import asyncio
-from crawl4ai import AsyncWebCrawler, LLMExtractionStrategy
+from crawl4ai import AsyncWebCrawler
+from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
 import tempfile
 
 load_dotenv()
@@ -74,36 +75,41 @@ async def scrape_website(request: ScrapeRequest):
         # Scrape the website using Crawl4AI
         logger.info(f"Scraping website: {request.url}")
         
-        async with AsyncWebCrawler(verbose=False) as crawler:
-            # Configure crawl options
-            crawl_options = {
-                "urls": [request.url],
-                "max_depth": request.max_depth or 1,
-                "max_pages": request.max_pages or 10,
-            }
-            
-            if request.include_patterns:
-                crawl_options["include_patterns"] = request.include_patterns
-            if request.exclude_patterns:
-                crawl_options["exclude_patterns"] = request.exclude_patterns
-            if request.wait_for:
-                crawl_options["wait_for"] = request.wait_for
-            if request.js_code:
-                crawl_options["js_code"] = request.js_code
-            if request.screenshot:
-                crawl_options["screenshot"] = request.screenshot
-            
+        # Configure browser
+        browser_config = BrowserConfig(verbose=False, headless=True)
+        
+        # Configure crawl options using CrawlerRunConfig
+        run_config = CrawlerRunConfig()
+        
+        # Note: crawl4ai 0.7.x API changes - single URL crawling via arun()
+        # For multi-page crawling, we'll use deep crawling or arun_many in future
+        # For MVP, we'll scrape single page
+        
+        async with AsyncWebCrawler(config=browser_config) as crawler:
             # Execute crawl
-            result = await crawler.arun(**crawl_options)
+            result = await crawler.arun(url=request.url, config=run_config)
             
             if not result.success:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Scraping failed: {result.error_message}"
+                    detail=f"Scraping failed: {result.error_message if hasattr(result, 'error_message') else 'Unknown error'}"
                 )
             
-            # Extract content
-            scraped_content = result.markdown or result.html or result.cleaned_html
+            # Extract content - use markdown property (0.7.x API)
+            scraped_content = ""
+            if hasattr(result, 'markdown'):
+                # markdown is a MarkdownOutput object with raw_markdown and fit_markdown
+                if hasattr(result.markdown, 'raw_markdown'):
+                    scraped_content = result.markdown.raw_markdown
+                elif hasattr(result.markdown, 'fit_markdown'):
+                    scraped_content = result.markdown.fit_markdown
+                else:
+                    scraped_content = str(result.markdown)
+            
+            if not scraped_content and hasattr(result, 'html'):
+                scraped_content = result.html
+            if not scraped_content and hasattr(result, 'cleaned_html'):
+                scraped_content = result.cleaned_html
             
             if not scraped_content:
                 raise HTTPException(
@@ -114,7 +120,16 @@ async def scrape_website(request: ScrapeRequest):
             # Get scraped URLs
             scraped_urls = [request.url]
             if hasattr(result, 'links') and result.links:
-                scraped_urls.extend(result.links[:request.max_pages or 10])
+                # links is a dict with 'internal' and 'external' keys in 0.7.x
+                if isinstance(result.links, dict):
+                    if 'internal' in result.links:
+                        internal_links = result.links['internal']
+                        if isinstance(internal_links, list):
+                            # Extract href from link dicts
+                            urls = [link.get('href', link) if isinstance(link, dict) else link for link in internal_links[:request.max_pages or 10]]
+                            scraped_urls.extend(urls)
+                elif isinstance(result.links, list):
+                    scraped_urls.extend(result.links[:request.max_pages or 10])
             
             # Save to temporary file
             with tempfile.NamedTemporaryFile(
