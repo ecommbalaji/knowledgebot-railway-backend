@@ -5,11 +5,17 @@ Complete list of environment variables for each service in Railway.
 ## API Gateway Service
 
 **Service Name**: `api-gateway`  
-**Root Directory**: `api_gateway`  
+**Root Directory**: `api_gateway` ⚠️ **IMPORTANT: Use underscore, NOT hyphen**  
 **Port**: `8000`  
 **Public Domain**: Yes (Generate Domain)  
 **CPU**: `0.5 vCPU` (Free Tier default)  
 **Memory**: `512 MB` (Free Tier default)
+
+### ⚠️ Common Error Fix:
+If you see **"Could not find root directory: api-gateway"**:
+- The Root Directory must be: `api_gateway` (with **underscore**, not hyphen)
+- Service name is `api-gateway` (with hyphen), but root directory uses underscore
+- Update in Railway Dashboard: **Settings** → **Root Directory** → Set to `api_gateway`
 
 ### Resource Settings:
 - **Settings** → **Resources**:
