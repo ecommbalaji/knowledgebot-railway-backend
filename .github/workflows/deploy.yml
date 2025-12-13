@@ -19,47 +19,33 @@ jobs:
 
       - name: Deploy all services
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
-          # Railway CLI uses RAILWAY_TOKEN automatically for authentication
-          # Deploy each service using project ID if available
-          PROJECT_ID="${{ secrets.RAILWAY_PROJECT_ID }}"
-          
-          if [ -z "$PROJECT_ID" ]; then
-            echo "⚠️ RAILWAY_PROJECT_ID secret not set. Attempting deployment without explicit project..."
-            echo "⚠️ Make sure services exist in Railway and are linked to this repo"
-          fi
+          # Railway CLI authentication:
+          # - RAILWAY_TOKEN: Project token (for project-level operations like railway up)
+          # - RAILWAY_API_TOKEN: Account token (alternative, but RAILWAY_TOKEN takes precedence)
+          # Note: For 'railway up', you need a PROJECT TOKEN (RAILWAY_TOKEN), not an Account token
           
           # Deploy each service
           echo "Deploying API Gateway..."
-          if [ -n "$PROJECT_ID" ]; then
-            railway up --service api-gateway --project "$PROJECT_ID" --detach || echo "⚠️ Service 'api-gateway' may not exist or needs manual setup"
-          else
-            railway up --service api-gateway --detach || echo "⚠️ Service 'api-gateway' may not exist or needs manual setup"
-          fi
+          railway up --service api-gateway --detach || echo "⚠️ Service 'api-gateway' may not exist or needs manual setup"
           
           echo "Deploying Knowledgebase Ingestion..."
-          if [ -n "$PROJECT_ID" ]; then
-            railway up --service knowledgebase-ingestion --project "$PROJECT_ID" --detach || echo "⚠️ Service 'knowledgebase-ingestion' may not exist or needs manual setup"
-          else
-            railway up --service knowledgebase-ingestion --detach || echo "⚠️ Service 'knowledgebase-ingestion' may not exist or needs manual setup"
-          fi
+          railway up --service knowledgebase-ingestion --detach || echo "⚠️ Service 'knowledgebase-ingestion' may not exist or needs manual setup"
           
           echo "Deploying Website Scraping..."
-          if [ -n "$PROJECT_ID" ]; then
-            railway up --service website-scraping --project "$PROJECT_ID" --detach || echo "⚠️ Service 'website-scraping' may not exist or needs manual setup"
-          else
-            railway up --service website-scraping --detach || echo "⚠️ Service 'website-scraping' may not exist or needs manual setup"
-          fi
+          railway up --service website-scraping --detach || echo "⚠️ Service 'website-scraping' may not exist or needs manual setup"
           
           echo "Deploying Chatbot Orchestration..."
-          if [ -n "$PROJECT_ID" ]; then
-            railway up --service chatbot-orchestration --project "$PROJECT_ID" --detach || echo "⚠️ Service 'chatbot-orchestration' may not exist or needs manual setup"
-          else
-            railway up --service chatbot-orchestration --detach || echo "⚠️ Service 'chatbot-orchestration' may not exist or needs manual setup"
-          fi
+          railway up --service chatbot-orchestration --detach || echo "⚠️ Service 'chatbot-orchestration' may not exist or needs manual setup"
           
           echo "✅ Deployment process complete!"
-          echo "ℹ️  Note: If services don't exist yet, create them manually in Railway dashboard first."
-          echo "ℹ️  See README.md for detailed setup instructions."
-          echo "ℹ️  Make sure RAILWAY_API_TOKEN secret is set correctly in GitHub repository secrets."
+          echo ""
+          echo "ℹ️  IMPORTANT NOTES:"
+          echo "  - If you see 'Project Token not found' errors:"
+          echo "    1. Go to Railway → Your Project → Settings → Tokens"
+          echo "    2. Create a PROJECT TOKEN (not an Account token)"
+          echo "    3. Add it as RAILWAY_TOKEN secret in GitHub (not RAILWAY_API_TOKEN)"
+          echo "  - Services must be created manually in Railway dashboard first"
+          echo "  - See README.md for detailed setup instructions"
