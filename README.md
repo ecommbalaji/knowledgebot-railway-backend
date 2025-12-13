@@ -391,19 +391,26 @@ Body: {
 
 #### Step 6: Configure GitHub Actions for Automated Deployment
 
+**Important Note**: 
+- GitHub Actions **does NOT** create services or set environment variables
+- GitHub Actions **only deploys code** after services are manually created
+- You must manually create all 4 services and set all environment variables in Railway dashboard (Steps 2-5 above)
+- Once services exist, GitHub Actions will automatically deploy code updates on every push to `main`
+
 1. **Add GitHub Secrets**:
    - Go to your GitHub repository → Settings → Secrets and variables → Actions
    - Click **"New repository secret"**
    - Add:
      - Name: `RAILWAY_API_TOKEN`
      - Value: Your Railway API token (from Railway → Account Settings → Tokens)
-   - Add:
+   - Optional (for better workflow):
      - Name: `RAILWAY_PROJECT_ID`
      - Value: Your Railway project ID (from project URL)
 
 2. **Verify Workflow**:
-   - The `.github/workflows/deploy.yml` workflow will automatically deploy on push to `main`
+   - The `.github/workflows/deploy.yml` workflow will automatically deploy code on push to `main`
    - Or manually trigger from Actions tab → "Deploy to Railway" → "Run workflow"
+   - This workflow only deploys existing services - it does NOT create them or set variables
 
 ### Railway Configuration Summary
 
