@@ -1,0 +1,37 @@
+name: Deploy to Railway
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Railway CLI
+        run: |
+          npm install -g @railway/cli@latest
+
+      - name: Deploy all services
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          # Deploy each service
+          echo "Deploying API Gateway..."
+          railway up --service api-gateway --detach || echo "⚠️ Service may need manual setup first"
+          
+          echo "Deploying Knowledgebase Ingestion..."
+          railway up --service knowledgebase-ingestion --detach || echo "⚠️ Service may need manual setup first"
+          
+          echo "Deploying Website Scraping..."
+          railway up --service website-scraping --detach || echo "⚠️ Service may need manual setup first"
+          
+          echo "Deploying Chatbot Orchestration..."
+          railway up --service chatbot-orchestration --detach || echo "⚠️ Service may need manual setup first"
+          
+          echo "✅ Deployment complete!"

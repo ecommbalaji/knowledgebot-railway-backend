@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api_gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - KNOWLEDGEBASE_INGESTION_URL=http://knowledgebase-ingestion:8001
+      - WEBSITE_SCRAPING_URL=http://website-scraping:8002
+      - CHATBOT_ORCHESTRATION_URL=http://chatbot-orchestration:8003
+      - API_GATEWAY_PORT=8000
+      - API_GATEWAY_HOST=0.0.0.0
+    env_file:
+      - .env
+    depends_on:
+      - knowledgebase-ingestion
+      - website-scraping
+      - chatbot-orchestration
+
+  knowledgebase-ingestion:
+    build:
+      context: .
+      dockerfile: services/knowledgebase_ingestion/Dockerfile
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+
+  website-scraping:
+    build:
+      context: .
+      dockerfile: services/website_scraping/Dockerfile
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+
+  chatbot-orchestration:
+    build:
+      context: .
+      dockerfile: services/chatbot_orchestration/Dockerfile
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env

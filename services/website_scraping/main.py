@@ -1,0 +1,174 @@
+"""Website Scraping Service - Handles website scraping using Crawl4AI and Gemini FileSearch."""
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, HttpUrl
+from typing import Optional, Dict, Any
+import google.generativeai as genai
+import os
+import logging
+from dotenv import load_dotenv
+import asyncio
+from crawl4ai import AsyncWebCrawler, LLMExtractionStrategy
+import tempfile
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Website Scraping Service", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize Gemini
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable is required")
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+
+class ScrapeRequest(BaseModel):
+    url: str
+    max_depth: Optional[int] = 1
+    max_pages: Optional[int] = 10
+    include_patterns: Optional[list[str]] = None
+    exclude_patterns: Optional[list[str]] = None
+    wait_for: Optional[str] = None
+    js_code: Optional[str] = None
+    screenshot: Optional[bool] = False
+
+
+class ScrapeResponse(BaseModel):
+    success: bool
+    message: str
+    file_name: Optional[str] = None
+    file_info: Optional[Dict[str, Any]] = None
+    scraped_urls: Optional[list[str]] = None
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "website_scraping"}
+
+
+@app.post("/scrape", response_model=ScrapeResponse)
+async def scrape_website(request: ScrapeRequest):
+    """
+    Scrape a website and upload to Gemini FileSearch.
+    
+    Args:
+        request: ScrapeRequest with URL and options
+    
+    Returns:
+        ScrapeResponse with upload information
+    """
+    try:
+        # Scrape the website using Crawl4AI
+        logger.info(f"Scraping website: {request.url}")
+        
+        async with AsyncWebCrawler(verbose=False) as crawler:
+            # Configure crawl options
+            crawl_options = {
+                "urls": [request.url],
+                "max_depth": request.max_depth or 1,
+                "max_pages": request.max_pages or 10,
+            }
+            
+            if request.include_patterns:
+                crawl_options["include_patterns"] = request.include_patterns
+            if request.exclude_patterns:
+                crawl_options["exclude_patterns"] = request.exclude_patterns
+            if request.wait_for:
+                crawl_options["wait_for"] = request.wait_for
+            if request.js_code:
+                crawl_options["js_code"] = request.js_code
+            if request.screenshot:
+                crawl_options["screenshot"] = request.screenshot
+            
+            # Execute crawl
+            result = await crawler.arun(**crawl_options)
+            
+            if not result.success:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Scraping failed: {result.error_message}"
+                )
+            
+            # Extract content
+            scraped_content = result.markdown or result.html or result.cleaned_html
+            
+            if not scraped_content:
+                raise HTTPException(
+                    status_code=500,
+                    detail="No content extracted from website"
+                )
+            
+            # Get scraped URLs
+            scraped_urls = [request.url]
+            if hasattr(result, 'links') and result.links:
+                scraped_urls.extend(result.links[:request.max_pages or 10])
+            
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.md',
+                delete=False,
+                encoding='utf-8'
+            ) as tmp_file:
+                tmp_file.write(scraped_content)
+                tmp_path = tmp_file.name
+            
+            try:
+                # Generate display name from URL
+                from urllib.parse import urlparse
+                parsed_url = urlparse(request.url)
+                domain = parsed_url.netloc.replace('www.', '')
+                display_name = f"scraped_{domain}_{os.path.basename(tmp_path)}.md"
+                
+                # Upload to Gemini FileSearch
+                logger.info(f"Uploading scraped content to Gemini FileSearch: {display_name}")
+                uploaded_file = genai.upload_file(
+                    path=tmp_path,
+                    display_name=display_name
+                )
+                
+                # Wait for file processing
+                logger.info(f"Uploaded file: {uploaded_file.name}, waiting for processing...")
+                
+                file_info = {
+                    "name": uploaded_file.name,
+                    "display_name": uploaded_file.display_name,
+                    "mime_type": uploaded_file.mime_type,
+                    "state": uploaded_file.state.name if hasattr(uploaded_file, 'state') else None,
+                }
+                
+                return ScrapeResponse(
+                    success=True,
+                    message=f"Website scraped and uploaded successfully",
+                    file_name=uploaded_file.name,
+                    file_info=file_info,
+                    scraped_urls=scraped_urls
+                )
+            finally:
+                # Clean up temp file
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error scraping website: {e}")
+        raise HTTPException(status_code=500, detail=f"Scraping failed: {str(e)}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8002)
