@@ -5,11 +5,20 @@ Complete list of environment variables for each service in Railway.
 ## API Gateway Service
 
 **Service Name**: `api-gateway`  
-**Root Directory**: `api_gateway` ⚠️ **IMPORTANT: Use underscore, NOT hyphen**  
+**Root Directory**: `.` (repository root) ⚠️ **CRITICAL: Must be `.` (dot), not `api_gateway`**  
+**Dockerfile Path**: `api_gateway/Dockerfile` (set in Railway service settings)  
 **Port**: `8000`  
 **Public Domain**: Yes (Generate Domain)  
 **CPU**: `0.5 vCPU` (Free Tier default)  
 **Memory**: `512 MB` (Free Tier default)
+
+### ⚠️ Important Configuration Note:
+Railway's "Root Directory" sets the **build context** for Docker. All our Dockerfiles assume the repository root (`.`) as the build context because they need to access:
+- `requirements.txt` (at root)
+- `shared/` directory (at root)
+- Service directories like `api_gateway/`, `services/knowledgebase_ingestion/`, etc.
+
+**Do NOT set Root Directory to the service subdirectory** - this will cause "shared: not found" errors!
 
 ### ⚠️ Common Error Fix:
 If you see **"Could not find root directory: api-gateway"**:
@@ -47,7 +56,8 @@ API_GATEWAY_HOST=0.0.0.0
 ## Knowledgebase Ingestion Service
 
 **Service Name**: `knowledgebase-ingestion`  
-**Root Directory**: `services/knowledgebase_ingestion`  
+**Root Directory**: `.` (repository root) ⚠️ **CRITICAL: Must be `.` (dot)**  
+**Dockerfile Path**: `services/knowledgebase_ingestion/Dockerfile` (set in Railway service settings)  
 **Port**: `8001`  
 **Public Domain**: No (Private/Internal)  
 **CPU**: `0.5 vCPU` (Free Tier default)  
@@ -77,7 +87,8 @@ GEMINI_API_KEY=your_gemini_api_key_here
 ## Website Scraping Service
 
 **Service Name**: `website-scraping`  
-**Root Directory**: `services/website_scraping`  
+**Root Directory**: `.` (repository root) ⚠️ **CRITICAL: Must be `.` (dot)**  
+**Dockerfile Path**: `services/website_scraping/Dockerfile` (set in Railway service settings)  
 **Port**: `8002`  
 **Public Domain**: No (Private/Internal)  
 **CPU**: `0.5 vCPU` (Free Tier default)  
@@ -107,7 +118,8 @@ GEMINI_API_KEY=your_gemini_api_key_here
 ## Chatbot Orchestration Service
 
 **Service Name**: `chatbot-orchestration`  
-**Root Directory**: `services/chatbot_orchestration`  
+**Root Directory**: `.` (repository root) ⚠️ **CRITICAL: Must be `.` (dot)**  
+**Dockerfile Path**: `services/chatbot_orchestration/Dockerfile` (set in Railway service settings)  
 **Port**: `8003`  
 **Public Domain**: No (Private/Internal)  
 **CPU**: `0.5 vCPU` (Free Tier default)  
@@ -182,28 +194,32 @@ RAILWAY_ENVIRONMENT=production
 
 ### Service 1: API Gateway
 - [ ] Service name: `api-gateway`
-- [ ] Root Directory: `api_gateway`
+- [ ] Root Directory: `.` (dot - repository root)
+- [ ] Dockerfile Path: `api_gateway/Dockerfile` (in Settings → Build)
 - [ ] Generate Public Domain
 - [ ] Resources: CPU 0.5 vCPU, Memory 512 MB (defaults)
 - [ ] Set 5 variables (see above)
 
 ### Service 2: Knowledgebase Ingestion
 - [ ] Service name: `knowledgebase-ingestion`
-- [ ] Root Directory: `services/knowledgebase_ingestion`
+- [ ] Root Directory: `.` (dot - repository root)
+- [ ] Dockerfile Path: `services/knowledgebase_ingestion/Dockerfile` (in Settings → Build)
 - [ ] No public domain
 - [ ] Resources: CPU 0.5 vCPU, Memory 512 MB (defaults)
 - [ ] Set 1 variable: `GEMINI_API_KEY`
 
 ### Service 3: Website Scraping
 - [ ] Service name: `website-scraping`
-- [ ] Root Directory: `services/website_scraping`
+- [ ] Root Directory: `.` (dot - repository root)
+- [ ] Dockerfile Path: `services/website_scraping/Dockerfile` (in Settings → Build)
 - [ ] No public domain
 - [ ] Resources: CPU 0.5 vCPU, Memory 512 MB (defaults)
 - [ ] Set 1 variable: `GEMINI_API_KEY`
 
 ### Service 4: Chatbot Orchestration
 - [ ] Service name: `chatbot-orchestration`
-- [ ] Root Directory: `services/chatbot_orchestration`
+- [ ] Root Directory: `.` (dot - repository root)
+- [ ] Dockerfile Path: `services/chatbot_orchestration/Dockerfile` (in Settings → Build)
 - [ ] No public domain
 - [ ] Resources: CPU 0.5 vCPU, Memory 512 MB (defaults)
 - [ ] Set 13 variables (see above)
@@ -234,13 +250,19 @@ RAILWAY_ENVIRONMENT=production
 
 ## Notes
 
-1. **Service Names**: Must match exactly (case-sensitive, with hyphens)
-2. **Ports**: Railway auto-detects from Dockerfile `EXPOSE` directives
-3. **Service URLs**: Use service names with hyphens, not underscores
-4. **Empty Values**: Variables with empty values can be left as `KEY=` or omitted
-5. **RAW Editor**: Use the RAW Editor in Railway Variables tab for bulk entry
-6. **Resources**: All services use Railway defaults (0.5 vCPU, 512 MB) which are within free tier limits
-7. **Resource Location**: Configure resources at **Settings** → **Resources** for each service
+1. **Root Directory**: ⚠️ **MUST be `.` (dot) for ALL services**. This is the repository root. Railway uses this as the Docker build context, and our Dockerfiles need access to `requirements.txt` and `shared/` at the root level.
+2. **Dockerfile Path**: Set in **Settings** → **Build** → **Dockerfile Path** for each service. Railway will use this relative to the Root Directory.
+3. **Service Names**: Must match exactly (case-sensitive, with hyphens)
+4. **Ports**: Railway auto-detects from Dockerfile `EXPOSE` directives
+5. **Service URLs**: Use service names with hyphens, not underscores
+6. **Empty Values**: Variables with empty values can be left as `KEY=` or omitted
+7. **RAW Editor**: Use the RAW Editor in Railway Variables tab for bulk entry
+8. **Resources**: All services use Railway defaults (0.5 vCPU, 512 MB) which are within free tier limits
+9. **Resource Location**: Configure resources at **Settings** → **Resources** for each service
+
+## Common Error: "shared: not found"
+
+If you see this error, it means the Root Directory is set incorrectly. It must be `.` (dot), not a subdirectory like `services/knowledgebase_ingestion`. The Dockerfiles assume the repository root as the build context.
 
 ## Free Tier Limits Reference
 
