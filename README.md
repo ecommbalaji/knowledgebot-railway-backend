@@ -400,12 +400,18 @@ Body: {
 1. **Add GitHub Secrets**:
    - Go to your GitHub repository → Settings → Secrets and variables → Actions
    - Click **"New repository secret"**
-   - Add:
-     - Name: `RAILWAY_API_TOKEN`
-     - Value: Your Railway API token (from Railway → Account Settings → Tokens)
-   - Optional (for better workflow):
-     - Name: `RAILWAY_PROJECT_ID`
-     - Value: Your Railway project ID (from project URL)
+   - **IMPORTANT**: Add a **PROJECT TOKEN** (not an Account token):
+     - Name: `RAILWAY_TOKEN`
+     - Value: Your Railway **Project Token** (from Railway → Your Project → Settings → Tokens → New Token)
+     - ⚠️ **Do NOT use Account Token** - `railway up` requires a Project Token
+   
+   **To get a Project Token**:
+   1. Go to Railway dashboard → Your Project
+   2. Click **Settings** → **Tokens**
+   3. Click **New Token** → Name it (e.g., "GitHub Actions")
+   4. Copy the token and add it as `RAILWAY_TOKEN` secret in GitHub
+   
+   **Note**: Project tokens are scoped to a specific project, while Account tokens are workspace-wide. For deployments, you need a Project token.
 
 2. **Verify Workflow**:
    - The `.github/workflows/deploy.yml` workflow will automatically deploy code on push to `main`
