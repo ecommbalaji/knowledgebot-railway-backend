@@ -17,36 +17,49 @@ jobs:
         run: |
           npm install -g @railway/cli@latest
 
-      - name: Link Railway Project
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        run: |
-          # Link to Railway project using project ID
-          if [ -n "${{ secrets.RAILWAY_PROJECT_ID }}" ]; then
-            echo "Linking to Railway project: ${{ secrets.RAILWAY_PROJECT_ID }}"
-            railway link --project ${{ secrets.RAILWAY_PROJECT_ID }} || echo "⚠️ Project linking may have failed, but continuing..."
-          else
-            echo "⚠️ RAILWAY_PROJECT_ID secret not set. Using default project link..."
-            railway link || echo "⚠️ Could not link to project"
-          fi
-
       - name: Deploy all services
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
+          # Railway CLI uses RAILWAY_TOKEN automatically for authentication
+          # Deploy each service using project ID if available
+          PROJECT_ID="${{ secrets.RAILWAY_PROJECT_ID }}"
+          
+          if [ -z "$PROJECT_ID" ]; then
+            echo "⚠️ RAILWAY_PROJECT_ID secret not set. Attempting deployment without explicit project..."
+            echo "⚠️ Make sure services exist in Railway and are linked to this repo"
+          fi
+          
           # Deploy each service
           echo "Deploying API Gateway..."
-          railway up --service api-gateway --detach || echo "⚠️ Service 'api-gateway' may need manual setup in Railway dashboard"
+          if [ -n "$PROJECT_ID" ]; then
+            railway up --service api-gateway --project "$PROJECT_ID" --detach || echo "⚠️ Service 'api-gateway' may not exist or needs manual setup"
+          else
+            railway up --service api-gateway --detach || echo "⚠️ Service 'api-gateway' may not exist or needs manual setup"
+          fi
           
           echo "Deploying Knowledgebase Ingestion..."
-          railway up --service knowledgebase-ingestion --detach || echo "⚠️ Service 'knowledgebase-ingestion' may need manual setup in Railway dashboard"
+          if [ -n "$PROJECT_ID" ]; then
+            railway up --service knowledgebase-ingestion --project "$PROJECT_ID" --detach || echo "⚠️ Service 'knowledgebase-ingestion' may not exist or needs manual setup"
+          else
+            railway up --service knowledgebase-ingestion --detach || echo "⚠️ Service 'knowledgebase-ingestion' may not exist or needs manual setup"
+          fi
           
           echo "Deploying Website Scraping..."
-          railway up --service website-scraping --detach || echo "⚠️ Service 'website-scraping' may need manual setup in Railway dashboard"
+          if [ -n "$PROJECT_ID" ]; then
+            railway up --service website-scraping --project "$PROJECT_ID" --detach || echo "⚠️ Service 'website-scraping' may not exist or needs manual setup"
+          else
+            railway up --service website-scraping --detach || echo "⚠️ Service 'website-scraping' may not exist or needs manual setup"
+          fi
           
           echo "Deploying Chatbot Orchestration..."
-          railway up --service chatbot-orchestration --detach || echo "⚠️ Service 'chatbot-orchestration' may need manual setup in Railway dashboard"
+          if [ -n "$PROJECT_ID" ]; then
+            railway up --service chatbot-orchestration --project "$PROJECT_ID" --detach || echo "⚠️ Service 'chatbot-orchestration' may not exist or needs manual setup"
+          else
+            railway up --service chatbot-orchestration --detach || echo "⚠️ Service 'chatbot-orchestration' may not exist or needs manual setup"
+          fi
           
-          echo "✅ Deployment complete!"
+          echo "✅ Deployment process complete!"
           echo "ℹ️  Note: If services don't exist yet, create them manually in Railway dashboard first."
           echo "ℹ️  See README.md for detailed setup instructions."
+          echo "ℹ️  Make sure RAILWAY_API_TOKEN secret is set correctly in GitHub repository secrets."
