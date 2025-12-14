@@ -16,5 +16,5 @@ WORKDIR /app/services/chatbot_orchestration
 # Expose port
 EXPOSE 8003
 
-# Run the application with uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8003"]
+# Run the application with uvicorn - use PORT env var from Railway
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8003}
