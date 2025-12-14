@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY services/website_scraping/ ./services/website_scraping/
-COPY shared/ ./shared/
+COPY shared ./shared/
 
 # Set working directory
 WORKDIR /app/services/website_scraping
