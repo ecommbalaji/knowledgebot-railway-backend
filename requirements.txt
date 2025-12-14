@@ -18,11 +18,11 @@ google-auth==2.43.0
 # Web Scraping
 crawl4ai==0.7.8
 beautifulsoup4==4.14.3
-lxml==6.0.2
+lxml==5.3.0  # Downgraded to satisfy crawl4ai's ~=5.3 requirement
 
 # Utilities
 pydantic-settings==2.12.0
 aiofiles==25.1.0
 
-# Added to resolve transitive dependency conflict
+# Added to resolve previous transitive dependency conflict (requests)
 requests==2.32.3
