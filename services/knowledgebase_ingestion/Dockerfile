@@ -16,5 +16,5 @@ WORKDIR /app/services/knowledgebase_ingestion
 # Expose port
 EXPOSE 8001
 
-# Run the application
-CMD ["python", "main.py"]
+# Run the application with uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
