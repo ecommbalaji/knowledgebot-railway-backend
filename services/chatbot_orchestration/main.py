@@ -9,12 +9,8 @@ from dotenv import load_dotenv
 import uuid
 from datetime import datetime
 import google.generativeai as genai
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
-# model_retry not available in pydantic-ai 1.32.0
-from pydantic_ai.usage import Usage
-# Tools are registered with agent instance, not via decorator
-from pydantic_ai.messages import UserMessage, AssistantMessage
 import asyncio
 
 load_dotenv()
