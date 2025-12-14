@@ -182,7 +182,6 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
 # Session context dependency for dependency injection
 def create_session_dependency(session_id: str):
     """Create a session context dependency."""
-    @model_with_retry.run_dependency
     def session_context() -> Dict[str, str]:
         """Inject session context into agent runs."""
         return {
@@ -216,8 +215,13 @@ When answering questions:
 
 
 # Initialize base agent
-def create_agent(session_id: str, file_context: Optional[List[SearchResult]] = None) -> Agent:
+def create_agent(session_id: str, file_context: Optional[List[SearchResult]] = None) -> Optional[Agent]:
     """Create a Pydantic AI agent for a session with dependency injection."""
+    
+    # Check if model is available
+    if model_with_retry is None:
+        logger.error("Cannot create agent - OpenAI API key not configured")
+        return None
     
     # Create session dependency
     session_dep = create_session_dependency(session_id)
@@ -270,6 +274,13 @@ async def chat(request: ChatRequest):
         
         # Create agent with context (dynamic prompt injection)
         agent = create_agent(session_id, file_context)
+        
+        # Check if agent was created successfully
+        if agent is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Chatbot service not configured - OpenAI API key required"
+            )
         
         # Build chat history from session
         chat_history = session["messages"]
