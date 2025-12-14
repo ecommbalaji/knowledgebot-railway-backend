@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# Docker
+.dockerignore
+docker-compose.yml
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+venv
+.env
+.env.local
+.venv
+
+# Railway
+.railway
+railway.toml
+RAILWAY_*.md
+
+# OS
+.DS_Store
+Thumbs.db
