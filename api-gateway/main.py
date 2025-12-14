@@ -48,6 +48,31 @@ async def health_check():
     return {"status": "healthy", "service": "api-gateway"}
 
 
+@app.get("/status")
+async def system_status():
+    """Check connections to all downstream services."""
+    services = {
+        "knowledgebase": KNOWLEDGEBASE_INGESTION_URL,
+        "website_scraping": WEBSITE_SCRAPING_URL,
+        "chatbot": CHATBOT_ORCHESTRATION_URL
+    }
+    statuses = {"gateway": "online"}
+    
+    async with httpx.AsyncClient() as client:
+        for name, url in services.items():
+            try:
+                # Try to hit the health endpoint of the downstream service
+                resp = await client.get(f"{url}/health", timeout=5.0)
+                if resp.status_code == 200:
+                    statuses[name] = "online" 
+                else:
+                    statuses[name] = f"error: {resp.status_code}"
+            except Exception as e:
+                statuses[name] = f"unreachable: {str(e)}"
+    
+    return statuses
+
+
 # Knowledgebase Ingestion Routes
 @app.post("/api/v1/knowledgebase/upload")
 async def upload_document(request: Request):
