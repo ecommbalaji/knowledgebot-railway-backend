@@ -189,6 +189,7 @@ async def review_response(session_id: str, data: Dict[str, Any]):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("API_GATEWAY_PORT", 8000))
+    # Railway sets PORT, fallback to API_GATEWAY_PORT or 8000
+    port = int(os.getenv("PORT", os.getenv("API_GATEWAY_PORT", "8000")))
     host = os.getenv("API_GATEWAY_HOST", "0.0.0.0")
     uvicorn.run(app, host=host, port=port)
