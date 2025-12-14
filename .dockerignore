@@ -28,4 +28,6 @@ RAILWAY_*.md
 Thumbs.db
 
 !shared
+!shared/*
+!shared/**
 

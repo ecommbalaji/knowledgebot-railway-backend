@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install dependencies
-RUN ls -laR .
+RUN find . -maxdepth 2 -not -path '*/.*'
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
