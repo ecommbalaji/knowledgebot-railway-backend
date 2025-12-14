@@ -90,17 +90,14 @@ class ChatSessionResponse(BaseModel):
     timestamp: str
 
 
+
 # Pydantic AI Agent Setup
-# Create model (only if API key is available)
+# OpenAI model reads API key from OPENAI_API_KEY environment variable automatically
 openai_model = None
 
 if OPENAI_API_KEY:
-    openai_model = OpenAIModel(
-        MODEL_NAME,
-        api_key=OPENAI_API_KEY,
-        temperature=TEMPERATURE,
-        max_tokens=MAX_TOKENS,
-    )
+    # Just pass the model name - API key is read from environment
+    openai_model = OpenAIModel(MODEL_NAME)
 else:
     logger.warning("OpenAI model not initialized - OPENAI_API_KEY is missing")
 
