@@ -3,7 +3,7 @@
 
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "api_gateway/Dockerfile"
+dockerfilePath = "api-gateway/Dockerfile"
 
 [deploy]
 startCommand = "python main.py"

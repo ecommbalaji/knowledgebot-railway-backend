@@ -4,7 +4,7 @@ services:
   api-gateway:
     build:
       context: .
-      dockerfile: api_gateway/Dockerfile
+      dockerfile: api-gateway/Dockerfile
     ports:
       - "8000:8000"
     environment:
