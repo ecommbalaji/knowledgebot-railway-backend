@@ -3,8 +3,8 @@ dockerfilePath = "services/knowledgebase_ingestion/Dockerfile"
 rootDirectory = "."
 
 [deploy]
-startCommand = "python main.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 healthcheckPath = "/health"
 healthcheckTimeout = 100
+
