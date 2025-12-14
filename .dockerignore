@@ -26,3 +26,6 @@ RAILWAY_*.md
 # OS
 .DS_Store
 Thumbs.db
+
+!shared
+
