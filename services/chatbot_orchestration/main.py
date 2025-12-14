@@ -32,7 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Gemini (optional for# Initialize Gemini (optional for healthcheck)
+# Initialize Gemini (optional for healthcheck)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     logger.warning("GEMINI_API_KEY environment variable not set - some features will fail")
@@ -95,16 +95,21 @@ class ChatSessionResponse(BaseModel):
 
 
 # Pydantic AI Agent Setup
-# Create model with retry mechanism for self-correction
-base_model = OpenAIModel(
-    MODEL_NAME,
-    api_key=OPENAI_API_KEY,
-    temperature=TEMPERATURE,
-    max_tokens=MAX_TOKENS,
-)
+# Create model with retry mechanism for self-correction (only if API key is available)
+base_model = None
+model_with_retry = None
 
-# Use model_retry for self-correction and retry mechanisms
-model_with_retry = model_retry(base_model, max_attempts=3)
+if OPENAI_API_KEY:
+    base_model = OpenAIModel(
+        MODEL_NAME,
+        api_key=OPENAI_API_KEY,
+        temperature=TEMPERATURE,
+        max_tokens=MAX_TOKENS,
+    )
+    # Use model_retry for self-correction and retry mechanisms
+    model_with_retry = model_retry(base_model, max_attempts=3)
+else:
+    logger.warning("OpenAI model not initialized - OPENAI_API_KEY is missing")
 
 
 # Tool for querying Gemini FileSearch
