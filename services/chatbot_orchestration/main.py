@@ -11,7 +11,7 @@ from datetime import datetime
 import google.generativeai as genai
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.models.retry import model_retry
+# model_retry not available in pydantic-ai 1.32.0
 from pydantic_ai.usage import Usage
 from pydantic_ai.tools import tool
 from pydantic_ai.messages import UserMessage, AssistantMessage
@@ -95,19 +95,16 @@ class ChatSessionResponse(BaseModel):
 
 
 # Pydantic AI Agent Setup
-# Create model with retry mechanism for self-correction (only if API key is available)
-base_model = None
-model_with_retry = None
+# Create model (only if API key is available)
+openai_model = None
 
 if OPENAI_API_KEY:
-    base_model = OpenAIModel(
+    openai_model = OpenAIModel(
         MODEL_NAME,
         api_key=OPENAI_API_KEY,
         temperature=TEMPERATURE,
         max_tokens=MAX_TOKENS,
     )
-    # Use model_retry for self-correction and retry mechanisms
-    model_with_retry = model_retry(base_model, max_attempts=3)
 else:
     logger.warning("OpenAI model not initialized - OPENAI_API_KEY is missing")
 
@@ -219,7 +216,7 @@ def create_agent(session_id: str, file_context: Optional[List[SearchResult]] = N
     """Create a Pydantic AI agent for a session with dependency injection."""
     
     # Check if model is available
-    if model_with_retry is None:
+    if openai_model is None:
         logger.error("Cannot create agent - OpenAI API key not configured")
         return None
     
@@ -228,7 +225,7 @@ def create_agent(session_id: str, file_context: Optional[List[SearchResult]] = N
     
     # Create agent with system prompt, tools, and dependencies
     agent = Agent(
-        model_with_retry,
+        openai_model,
         system_prompt=get_system_prompt(file_context),
         tools=[search_knowledge_base],
         dependencies=[session_dep],
