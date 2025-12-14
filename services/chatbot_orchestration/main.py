@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 # model_retry not available in pydantic-ai 1.32.0
 from pydantic_ai.usage import Usage
-from pydantic_ai.tools import tool
+# Tools are registered with agent instance, not via decorator
 from pydantic_ai.messages import UserMessage, AssistantMessage
 import asyncio
 
@@ -110,7 +110,7 @@ else:
 
 
 # Tool for querying Gemini FileSearch
-@tool
+# Tool for querying Gemini FileSearch
 async def search_knowledge_base(query: Annotated[str, "The search query to find relevant information"]) -> List[SearchResult]:
     """
     Search the knowledge base using Gemini FileSearch for relevant information.
@@ -223,11 +223,10 @@ def create_agent(session_id: str, file_context: Optional[List[SearchResult]] = N
     # Create session dependency
     session_dep = create_session_dependency(session_id)
     
-    # Create agent with system prompt, tools, and dependencies
+    # Create agent with system prompt and dependencies (tools removed for now)
     agent = Agent(
         openai_model,
         system_prompt=get_system_prompt(file_context),
-        tools=[search_knowledge_base],
         dependencies=[session_dep],
     )
     
