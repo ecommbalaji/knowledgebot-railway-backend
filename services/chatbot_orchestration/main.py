@@ -42,7 +42,7 @@ else:
 # Initialize OpenAI model for Pydantic AI (optional for healthcheck)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    logger.warning("OPENAI_API_KEY environment variable not set - chat endpoints will fail")t - chat endpoints will fail")
+    logger.warning("OPENAI_API_KEY environment variable not set - chat endpoints will fail")
 else:
     # Model initialization will happen when needed
     pass
