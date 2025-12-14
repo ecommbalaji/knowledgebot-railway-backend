@@ -32,7 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Gemini (optional for healthcheck)
+# Initialize Gemini (optional for# Initialize Gemini (optional for healthcheck)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     logger.warning("GEMINI_API_KEY environment variable not set - some features will fail")
@@ -42,7 +42,7 @@ else:
 # Initialize OpenAI model for Pydantic AI (optional for healthcheck)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    logger.warning("OPENAI_API_KEY environment variable not set - chat endpoints will fail")
+    logger.warning("OPENAI_API_KEY environment variable not set - chat endpoints will fail")t - chat endpoints will fail")
 else:
     # Model initialization will happen when needed
     pass
