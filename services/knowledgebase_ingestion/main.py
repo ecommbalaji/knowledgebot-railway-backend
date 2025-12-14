@@ -24,12 +24,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Gemini
+# Initialize Gemini (optional for healthcheck)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY environment variable is required")
-
-genai.configure(api_key=GEMINI_API_KEY)
+    logger.warning("GEMINI_API_KEY environment variable not set - API endpoints will fail")
+else:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 
 class FileInfo(BaseModel):

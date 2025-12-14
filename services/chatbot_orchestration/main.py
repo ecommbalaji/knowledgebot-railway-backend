@@ -32,17 +32,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Gemini
+# Initialize Gemini (optional for healthcheck)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY environment variable is required")
+    logger.warning("GEMINI_API_KEY environment variable not set - some features will fail")
+else:
+    genai.configure(api_key=GEMINI_API_KEY)
 
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Initialize OpenAI model for Pydantic AI
+# Initialize OpenAI model for Pydantic AI (optional for healthcheck)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY environment variable is required")
+    logger.warning("OPENAI_API_KEY environment variable not set - chat endpoints will fail")
+else:
+    # Model initialization will happen when needed
+    pass
 
 MODEL_NAME = os.getenv("CHATBOT_MODEL", "gpt-4o")
 TEMPERATURE = float(os.getenv("CHATBOT_TEMPERATURE", "0.7"))
