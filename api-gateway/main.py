@@ -44,26 +44,8 @@ class HealthResponse(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    services_status = {}
-    
-    # Check each service
-    for service_name, service_url in [
-        ("knowledgebase_ingestion", KNOWLEDGEBASE_INGESTION_URL),
-        ("website_scraping", WEBSITE_SCRAPING_URL),
-        ("chatbot_orchestration", CHATBOT_ORCHESTRATION_URL),
-    ]:
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{service_url}/health", timeout=5.0
-                )
-                services_status[service_name] = "healthy" if response.status_code == 200 else "unhealthy"
-        except Exception as e:
-            logger.warning(f"Service {service_name} check failed: {e}")
-            services_status[service_name] = "unreachable"
-    
-    return HealthResponse(status="operational", services=services_status)
+    """Health check endpoint - returns gateway status only."""
+    return {"status": "healthy", "service": "api-gateway"}
 
 
 # Knowledgebase Ingestion Routes
