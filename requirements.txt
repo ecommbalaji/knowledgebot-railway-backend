@@ -1,30 +1,27 @@
 # Core dependencies
 fastapi==0.124.4
-uvicorn[standard]==0.38.0
-pydantic>=2.10,<3.0.0
+uvicorn[standard]==0.30.1
+pydantic>=2.8.2,<3.0.0
 httpx==0.28.1
-python-dotenv==1.2.1
+python-dotenv==1.0.1
 
 # Pydantic AI (for Chatbot Orchestration)
 pydantic-ai==1.32.0
 
 # OpenAI (for LLM in Chatbot Orchestration)
-openai==2.11.0
+openai==1.37.1
 
 # Google Gemini (for FileSearch)
 google-generativeai==0.8.5
-google-auth==2.43.0
+google-auth==2.31.0
 
 # Web Scraping
 crawl4ai==0.7.8
 beautifulsoup4==4.12.3
-lxml==5.3.2
-playwright==1.49.0
+lxml==5.3.0
+playwright==1.56.0
 
 # Utilities
-pydantic-settings==2.12.0
-aiofiles==25.1.0
-
-# Added to resolve transitive dependency conflict (requests version)
-requests==2.32.5
+pydantic-settings==2.3.4
+aiofiles==24.1.0
 python-multipart==0.0.9
