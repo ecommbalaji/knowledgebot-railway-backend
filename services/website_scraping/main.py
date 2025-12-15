@@ -73,7 +73,8 @@ async def scrape_website(request: ScrapeRequest):
     """
     try:
         # Scrape the website using Crawl4AI
-        logger.info(f"Scraping website: {request.url}")
+        logger.info(f"Received explicit scraping request for URL: {request.url}")
+        logger.info("Starting scrape process...")
         
         # Configure browser
         browser_config = BrowserConfig(verbose=False, headless=True)
@@ -164,6 +165,34 @@ async def scrape_website(request: ScrapeRequest):
                     "mime_type": uploaded_file.mime_type,
                     "state": uploaded_file.state.name if hasattr(uploaded_file, 'state') else None,
                 }
+
+                # Verify ingestion and wait for ACTIVE state
+                try:
+                    logger.info("Verifying file ingestion in Gemini and waiting for ACTIVE state...")
+                    import time
+                    
+                    # Wait up to 30 seconds for processing
+                    for _ in range(15):
+                        gf_file = genai.get_file(uploaded_file.name)
+                        logger.info(f"File {gf_file.name} state: {gf_file.state.name}")
+                        
+                        if gf_file.state.name == "ACTIVE":
+                            logger.info(f"Verification successful. File is ready for use.")
+                            # Update the local file info with the active state
+                            file_info["state"] = "ACTIVE"
+                            break
+                        elif gf_file.state.name == "FAILED":
+                            raise Exception("File processing failed in Gemini")
+                            
+                        # Wait 2 seconds before retry
+                        await asyncio.sleep(2)
+                    else:
+                        logger.warning("Timeout waiting for file to be ACTIVE")
+                        file_info["verification_warning"] = "Timeout waiting for file to ensure ACTIVE state"
+                        
+                except Exception as verify_err:
+                    logger.error(f"Post-upload verification failed: {verify_err}")
+                    file_info["verification_warning"] = str(verify_err)
                 
                 return ScrapeResponse(
                     success=True,

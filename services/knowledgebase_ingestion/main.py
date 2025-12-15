@@ -8,6 +8,7 @@ import os
 import logging
 from dotenv import load_dotenv
 import json
+import asyncio
 
 load_dotenv()
 
@@ -99,8 +100,27 @@ async def upload_document(
             )
             
             # Wait for file processing (check state)
-            logger.info(f"Uploaded file: {uploaded_file.name}, state: {uploaded_file.state}")
+            logger.info(f"Uploaded file: {uploaded_file.name}, initial state: {uploaded_file.state.name}")
             
+            # Poll for ACTIVE state
+            final_state = uploaded_file.state.name
+            try:
+                for _ in range(15): # Wait up to 30 seconds
+                    # Refresh file state
+                    current_file = genai.get_file(uploaded_file.name)
+                    final_state = current_file.state.name
+                    logger.info(f"Polling file {uploaded_file.name} state: {final_state}")
+                    
+                    if final_state == "ACTIVE":
+                        break
+                    elif final_state == "FAILED":
+                        logger.error(f"File {uploaded_file.name} failed processing")
+                        break
+                        
+                    await asyncio.sleep(2)
+            except Exception as e:
+                logger.warning(f"Error polling file state: {e}")
+
             file_info = FileInfo(
                 name=uploaded_file.name,
                 display_name=uploaded_file.display_name,
@@ -111,7 +131,7 @@ async def upload_document(
                 size_bytes=str(uploaded_file.size_bytes) if uploaded_file.size_bytes else None,
                 sha256_hash=getattr(uploaded_file, 'sha256_hash', None),
                 uri=getattr(uploaded_file, 'uri', None),
-                state=uploaded_file.state.name if hasattr(uploaded_file, 'state') else None,
+                state=final_state,
             )
             
             return UploadResponse(
