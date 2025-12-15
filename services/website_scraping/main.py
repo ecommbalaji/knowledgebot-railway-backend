@@ -29,10 +29,10 @@ app.add_middleware(
 
 # Initialize Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-else:
-    logger.warning("GEMINI_API_KEY not set. Scraping will work, but upload will fail.")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable is required")
+
+genai.configure(api_key=GEMINI_API_KEY)
 
 
 class ScrapeRequest(BaseModel):
@@ -71,12 +71,6 @@ async def scrape_website(request: ScrapeRequest):
     Returns:
         ScrapeResponse with upload information
     """
-    if not GEMINI_API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="Scraping service is not configured with a GEMINI_API_KEY"
-        )
-
     try:
         # Scrape the website using Crawl4AI
         logger.info(f"Scraping website: {request.url}")
