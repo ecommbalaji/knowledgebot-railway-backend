@@ -116,57 +116,71 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
     """
     try:
         # List all files in Gemini FileSearch
-        # Convert generator to list to allow slicing
-        files = list(genai.list_files())
+        # Convert generator to list
+        all_files = list(genai.list_files())
         
-        if not files:
+        if not all_files:
             logger.warning("No files found in FileSearch store")
             return []
+            
+        # Filter for ACTIVE files only
+        active_files = [f for f in all_files if f.state.name == "ACTIVE"]
         
-        results = []
+        if not active_files:
+            logger.warning("No ACTIVE files found in FileSearch store")
+            return []
+            
+        # Use simple heuristic: take up to 20 most recent files
+        # In a real app, you might filter by name or metadata
+        files_to_search = active_files[:20]
         
-        # For MVP: Use Gemini to search through files
-        # In production, use the FileSearch API with proper semantic search
+        logger.info(f"Searching {len(files_to_search)} files with Gemini 1.5 Flash for query: {query}")
+
         try:
-            # Use Gemini model with file access for semantic search
-            gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+            # Initialize Gemini 1.5 Flash for retrieval
+            # This model has a large context window and is fast/cheap
+            # We treat it as a "Neural Retriever"
+            model = genai.GenerativeModel('gemini-1.5-flash')
             
-            # Build context from available files
-            file_list = [f.name for f in files[:10]]  # Limit to first 10 files for MVP
+            # Construct the retrieval prompt
+            retrieval_prompt = f"""
+            You are a specialized retrieval system. Your task is to extract information from the provided files to answer the user's query.
             
-            # Create a search prompt
-            search_prompt = f"""
-            User query: {query}
+            User Query: "{query}"
             
-            Search through the available files and identify which files are most relevant.
-            Return a list of the most relevant file names.
+            Instructions:
+            1. Search through the attached files for information relevant to the query.
+            2. Extract direct quotes, data points, and context that answer the question.
+            3. If the files contain the answer, provide a detailed summary of the relevant information.
+            4. If the files do NOT contain the answer, state "No relevant information found in the knowledge base."
+            
+            Output Format:
+            - Source File: [Filename]
+            - Relevant Content: [Extracted Information]
             """
             
-            # For MVP, we'll return file metadata
-            # In production, use FileSearch API's semantic search
-            for file in files[:5]:  # Return top 5 results
-                try:
-                    file_info = genai.get_file(file.name)
-                    results.append(SearchResult(
-                        file_name=file.display_name or file.name,
-                        content=f"Content from {file.display_name}",
-                        relevance_score=0.8
-                    ))
-                except Exception as e:
-                    logger.warning(f"Error accessing file {file.name}: {e}")
-                    continue
+            # Generate content using the model with the files attached
+            # Gemini Python SDK allows passing file objects directly in the content list
+            response = await model.generate_content_async(
+                contents=[*files_to_search, retrieval_prompt]
+            )
+            
+            # Create a single consolidated result from the LLM's retrieval
+            # This acts as the "context" for the downstream orchestration agent
+            return [SearchResult(
+                file_name="Gemini_Neural_Retrieval_1.5_Flash",
+                content=response.text,
+                relevance_score=1.0
+            )]
             
         except Exception as e:
-            logger.error(f"Error in FileSearch: {e}")
-            # Fallback: return file list
-            for file in files[:5]:
-                results.append(SearchResult(
-                    file_name=file.display_name or file.name,
-                    content="File available in knowledge base",
-                    relevance_score=0.5
-                ))
-        
-        return results[:5]  # Return max 5 results
+            logger.error(f"Error in Neural Retrieval: {e}")
+            # Fallback (return list of files if retrieval fails)
+            return [SearchResult(
+                file_name="System",
+                content=f"Error performing semantic search. Available files: {', '.join(f.display_name for f in files_to_search)}",
+                relevance_score=0.1
+            )]
         
     except Exception as e:
         logger.error(f"Error searching knowledge base: {e}")
