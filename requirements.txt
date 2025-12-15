@@ -13,7 +13,7 @@ openai==2.11.0
 
 # Google Gemini (for FileSearch)
 google-generativeai==0.8.5
-google-auth==2.31.0
+google-auth==2.38.0
 
 # Web Scraping
 crawl4ai==0.7.8
