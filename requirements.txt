@@ -26,3 +26,4 @@ aiofiles==25.1.0
 
 # Added to resolve transitive dependency conflict (requests version)
 requests==2.32.5
+python-multipart==0.0.9
