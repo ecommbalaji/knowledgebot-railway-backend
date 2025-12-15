@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 import uuid
 from datetime import datetime
 import google.generativeai as genai
-from pydantic_ai import Agent
-from pydantic_ai.message import UserMessage, AssistantMessage
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import UserMessage, AssistantMessage
 from pydantic_ai.models.openai import OpenAIModel
 import asyncio
 
@@ -201,11 +201,14 @@ def create_agent(session_id: str, file_context: Optional[List[SearchResult]] = N
         logger.error("Cannot create agent - OpenAI API key not configured")
         return None
     
+    # Create session dependency
+    session_dep = create_session_dependency(session_id)
+
     # Create agent with system prompt and dependencies (tools removed for now)
     agent = Agent(
-        llm=openai_model,
+        openai_model,
         system_prompt=get_system_prompt(file_context),
-        tools=[search_knowledge_base],
+        dependencies=[session_dep],
     )
     
     return agent
@@ -263,12 +266,12 @@ async def chat(request: ChatRequest):
         agent_messages = []
         for msg in chat_history[-10:]:  # Keep last 10 messages for context
             if msg["role"] == "user":
-                agent_messages.append(UserMessage(content=msg["content"]))
+                agent_messages.append(UserMessage(msg["content"]))
             elif msg["role"] == "assistant":
-                agent_messages.append(AssistantMessage(content=msg["content"]))
+                agent_messages.append(AssistantMessage(msg["content"]))
         
         # Add current user message
-        agent_messages.append(UserMessage(content=request.message))
+        agent_messages.append(UserMessage(request.message))
         
         # Run agent (with self-correction via model_retry)
         result = await agent.run(agent_messages)
