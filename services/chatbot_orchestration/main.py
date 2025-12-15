@@ -116,7 +116,8 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
     """
     try:
         # List all files in Gemini FileSearch
-        files = genai.list_files()
+        # Convert generator to list to allow slicing
+        files = list(genai.list_files())
         
         if not files:
             logger.warning("No files found in FileSearch store")
@@ -281,7 +282,9 @@ async def chat(request: ChatRequest):
             if msg["role"] == "user":
                 history_messages.append(ModelRequest(parts=[UserPromptPart(content=msg["content"])]))
             elif msg["role"] == "assistant":
-                history_messages.append(ModelResponse(parts=[TextPart(content=msg["content"])]))
+                # Ensure content is a string
+                content_str = str(msg["content"]) if msg["content"] is not None else ""
+                history_messages.append(ModelResponse(parts=[TextPart(content=content_str)]))
         
         # Run agent (with self-correction via model_retry)
         # Pass the current message as prompt and previous messages as history
@@ -294,10 +297,15 @@ async def chat(request: ChatRequest):
         
         # Extract response text
         response_text = ""
-        if hasattr(result, 'response') and result.response:
-            response_text = result.response.text or str(result.data) if hasattr(result, 'data') else ""
+        if hasattr(result, 'output'):
+             # pydantic-ai v1.32.0 prefers .output (validated result)
+             response_text = result.output if isinstance(result.output, str) else str(result.output)
         elif hasattr(result, 'data'):
-            response_text = str(result.data)
+             # fallback or older versions
+             response_text = str(result.data)
+        elif hasattr(result, 'response') and result.response:
+             # fallback for raw response access attempt
+             response_text = result.response.text if hasattr(result.response, 'text') else str(result.response)
         
         # Build structured response
         response_data = ChatResponse(
