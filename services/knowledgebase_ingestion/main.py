@@ -78,17 +78,18 @@ async def upload_document(
         UploadResponse with file information
     """
     try:
-        # Read file content
-        content = await file.read()
-        
         # Use display name or filename
         file_display_name = display_name or file.filename or "uploaded_file"
         
         # Gemini API requires file path, so write to temp file
         import tempfile
         file_ext = os.path.splitext(file.filename or "")[1] or ".bin"
+        
+        # Stream file to disk to avoid OOM
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
-            tmp_file.write(content)
+            # Read in 1MB chunks
+            while chunk := await file.read(1024 * 1024):
+                tmp_file.write(chunk)
             tmp_path = tmp_file.name
         
         try:

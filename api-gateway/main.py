@@ -154,7 +154,7 @@ async def upload_document(
                 f"{KNOWLEDGEBASE_INGESTION_URL}/upload",
                 files=files,
                 data=data,
-                timeout=60.0
+                timeout=300.0
             )
             response.raise_for_status()
             return JSONResponse(
@@ -167,11 +167,18 @@ async def upload_document(
                 status_code=e.response.status_code,
                 detail=e.response.json()
             )
+        except httpx.TimeoutException as e:
+            logger.error(f"Timeout connecting to knowledgebase service: {e}")
+            raise HTTPException(
+                status_code=504,
+                detail="Gateway Timeout: The upload took too long to process."
+            )
         except Exception as e:
-            logger.error(f"Knowledgebase ingestion error: {e}")
+            logger.error(f"Knowledgebase ingestion error: {repr(e)}")
+            # Use repr() to get the exception type and message, avoiding empty strings
             raise HTTPException(
                 status_code=502,
-                detail=f"Service error: {str(e)}"
+                detail=f"Service error: {repr(e)}"
             )
 
 
