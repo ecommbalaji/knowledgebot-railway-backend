@@ -3,8 +3,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Annotated
+from typing import Optional, List, Dict, Any, Annotated
 import os
 import logging
+from dataclasses import dataclass
 from dotenv import load_dotenv
 import uuid
 from datetime import datetime
@@ -192,23 +194,30 @@ When answering questions:
     return base_prompt
 
 
+@dataclass
+class ChatSessionDeps:
+    """Dependencies for chat session."""
+    session_id: str
+
+def create_session_dependency(session_id: str) -> ChatSessionDeps:
+    """Create session dependency instance."""
+    return ChatSessionDeps(session_id=session_id)
+
 # Initialize base agent
-def create_agent(session_id: str, file_context: Optional[List[SearchResult]] = None) -> Optional[Agent]:
-    """Create a Pydantic AI agent for a session with dependency injection."""
+def create_agent(file_context: Optional[List[SearchResult]] = None) -> Optional[Agent]:
+    """Create a Pydantic AI agent with dependency injection configuration."""
     
     # Check if model is available
     if openai_model is None:
         logger.error("Cannot create agent - OpenAI API key not configured")
         return None
-    
-    # Create session dependency
-    session_dep = create_session_dependency(session_id)
 
-    # Create agent with system prompt and dependencies (tools removed for now)
+    # Create agent with system prompt and dependencies configuration
+    # We pass the TYPE of the dependency here, not an instance
     agent = Agent(
         openai_model,
         system_prompt=get_system_prompt(file_context),
-        dependencies=[session_dep],
+        deps_type=ChatSessionDeps,
     )
     
     return agent
@@ -250,7 +259,11 @@ async def chat(request: ChatRequest):
         session = sessions[session_id]
         
         # Create agent with context (dynamic prompt injection)
-        agent = create_agent(session_id, file_context)
+        agent = create_agent(file_context)
+        
+        # Create dependency instance for this run
+        session_dep = create_session_dependency(session_id)
+
         
         # Check if agent was created successfully
         if agent is None:
@@ -272,7 +285,12 @@ async def chat(request: ChatRequest):
         
         # Run agent (with self-correction via model_retry)
         # Pass the current message as prompt and previous messages as history
-        result = await agent.run(request.message, message_history=history_messages)
+        # Also pass the dependency instance for this specific run
+        result = await agent.run(
+            request.message, 
+            message_history=history_messages,
+            deps=session_dep
+        )
         
         # Extract response text
         response_text = ""
