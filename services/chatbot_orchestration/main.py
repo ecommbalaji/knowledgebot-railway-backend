@@ -130,9 +130,9 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
             logger.warning("No ACTIVE files found in FileSearch store")
             return []
             
-        # Use simple heuristic: take up to 20 most recent files
+        # Use simple heuristic: take up to 5 most recent files to avoid payload limits during debugging
         # In a real app, you might filter by name or metadata
-        files_to_search = active_files[:20]
+        files_to_search = active_files[:5]
         
         logger.info(f"Searching {len(files_to_search)} files with Gemini 1.5 Flash for query: {query}")
 
@@ -176,9 +176,10 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
         except Exception as e:
             logger.error(f"Error in Neural Retrieval: {e}")
             # Fallback (return list of files if retrieval fails)
+            # EXPOSE THE ERROR for debugging purposes
             return [SearchResult(
-                file_name="System",
-                content=f"Error performing semantic search. Available files: {', '.join(f.display_name for f in files_to_search)}",
+                file_name="System_Error",
+                content=f"Error performing semantic search: {str(e)}. Files attempting to search: {', '.join(f.name for f in files_to_search)}",
                 relevance_score=0.1
             )]
         
