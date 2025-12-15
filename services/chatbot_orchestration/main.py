@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 import google.generativeai as genai
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import UserMessage, AssistantMessage
+from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
 from pydantic_ai.models.openai import OpenAIModel
 import asyncio
 
@@ -263,18 +263,16 @@ async def chat(request: ChatRequest):
         chat_history = session["messages"]
         
         # Convert chat history to agent messages
-        agent_messages = []
+        history_messages = []
         for msg in chat_history[-10:]:  # Keep last 10 messages for context
             if msg["role"] == "user":
-                agent_messages.append(UserMessage(msg["content"]))
+                history_messages.append(ModelRequest(parts=[UserPromptPart(content=msg["content"])]))
             elif msg["role"] == "assistant":
-                agent_messages.append(AssistantMessage(msg["content"]))
-        
-        # Add current user message
-        agent_messages.append(UserMessage(request.message))
+                history_messages.append(ModelResponse(parts=[TextPart(content=msg["content"])]))
         
         # Run agent (with self-correction via model_retry)
-        result = await agent.run(agent_messages)
+        # Pass the current message as prompt and previous messages as history
+        result = await agent.run(request.message, message_history=history_messages)
         
         # Extract response text
         response_text = ""
