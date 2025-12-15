@@ -137,10 +137,10 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
         logger.info(f"Searching {len(files_to_search)} files with Gemini 1.5 Flash for query: {query}")
 
         try:
-            # Initialize Gemini 1.5 Flash for retrieval
+            # Initialize Gemini 2.5 Flash for retrieval
             # This model has a large context window and is fast/cheap
             # We treat it as a "Neural Retriever"
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.5-flash')
             
             # Construct the retrieval prompt
             retrieval_prompt = f"""
