@@ -1,9 +1,9 @@
 # Core dependencies
 fastapi==0.124.4
 uvicorn[standard]==0.30.1
-pydantic>=2.8.2,<3.0.0
+pydantic==2.12.5
 httpx==0.28.1
-python-dotenv==1.0.1
+python-dotenv==1.2.1
 
 # Pydantic AI (for Chatbot Orchestration)
 pydantic-ai==1.32.0
