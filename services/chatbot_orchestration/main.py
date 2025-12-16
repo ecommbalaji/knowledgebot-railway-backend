@@ -130,6 +130,9 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
             logger.warning("No ACTIVE files found in FileSearch store")
             return []
             
+        # Sort by creation time (descending) to get the most recent files
+        active_files.sort(key=lambda f: f.create_time, reverse=True)
+        
         # Use simple heuristic: take up to 5 most recent files to avoid payload limits during debugging
         # In a real app, you might filter by name or metadata
         files_to_search = active_files[:5]
@@ -191,15 +194,15 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
 # System prompt with dynamic context
 def get_system_prompt(file_context: Optional[List[SearchResult]] = None) -> str:
     """Generate dynamic system prompt with optional file context."""
-    base_prompt = """You are a helpful knowledge assistant chatbot for the website https://books.toscrape.com/.
-
-Your role is to answer questions about books, authors, pricing, availability, and any other information related to the book catalog.
-
-When answering questions:
-1. Use the search_knowledge_base tool to find relevant information
-2. Provide accurate answers based on the knowledge base
-3. If information is not available, clearly indicate that
-4. Be helpful and conversational"""
+    base_prompt = """You are a helpful knowledge assistant chatbot.
+    
+    Your role is to answer questions based on the information provided in your knowledge base (files, scraped websites, etc.).
+    
+    When answering questions:
+    1. Use the search_knowledge_base tool to find relevant information
+    2. Provide accurate answers based on the knowledge base content
+    3. If information is not available in the context, clearly indicate that
+    4. Be helpful and conversational"""
     
     if file_context:
         context_section = "\n\nAvailable knowledge base files:\n"
