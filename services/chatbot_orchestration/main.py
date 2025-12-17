@@ -137,13 +137,12 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
         # In a real app, you might filter by name or metadata
         files_to_search = active_files[:5]
         
-        logger.info(f"Searching {len(files_to_search)} files with Gemini 1.5 Flash for query: {query}")
+        logger.info(f"Searching {len(files_to_search)} files with Gemini 2.5 Flash Lite for query: {query}")
 
         try:
-            # Initialize Gemini 2.5 Flash for retrieval
-            # This model has a large context window and is fast/cheap
+            # Initialize Gemini 2.5 Flash Lite for retrieval (cheaper, fast)
             # We treat it as a "Neural Retriever"
-            model = genai.GenerativeModel('gemini-2.5-flash')
+            model = genai.GenerativeModel('gemini-2.5-flash-lite')
             
             # Construct the retrieval prompt
             retrieval_prompt = f"""
@@ -171,7 +170,7 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
             # Create a single consolidated result from the LLM's retrieval
             # This acts as the "context" for the downstream orchestration agent
             return [SearchResult(
-                file_name="Gemini_Neural_Retrieval_1.5_Flash",
+                file_name="Gemini_Neural_Retrieval_2.5_Flash_Lite",
                 content=response.text,
                 relevance_score=1.0
             )]
