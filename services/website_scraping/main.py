@@ -29,10 +29,30 @@ app.add_middleware(
 
 # Initialize Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+logger.info(f"GEMINI_API_KEY configured: {'YES' if GEMINI_API_KEY else 'NO'}")
+
 if not GEMINI_API_KEY:
+    logger.error("GEMINI_API_KEY environment variable is required")
     raise ValueError("GEMINI_API_KEY environment variable is required")
 
-genai_client = genai.Client(api_key=GEMINI_API_KEY)
+try:
+    genai_client = genai.Client(api_key=GEMINI_API_KEY)
+    logger.info("Gemini client initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Gemini client: {e}")
+    raise
+
+@app.on_event("startup")
+async def startup_event():
+    """Log when the service starts successfully."""
+    logger.info("🚀 Website scraping service started successfully")
+    logger.info("🏥 Health check endpoint: /health")
+    logger.info("🔗 Scrape endpoint: POST /scrape")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Log when the service shuts down."""
+    logger.info("🛑 Website scraping service shutting down")
 
 
 class ScrapeRequest(BaseModel):
