@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 # Debug logging to check if script starts
 logger.info("🔍 API Gateway script starting...")
 
+try:
+    logger.info("🔍 Testing basic imports and setup...")
+
 # Add startup logging
 logger.info("="*60)
 logger.info("API GATEWAY SERVICE STARTING UP")
@@ -57,18 +60,23 @@ logger.info(f"🚀 Application will start on port {PORT}")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown events."""
-    # Startup
-    startup_time = time.time() - getattr(app, 'start_time', time.time())
-    logger.info(f"Startup time: {startup_time:.2f} seconds")
-    logger.info(f"🚀 FastAPI application started successfully on port {PORT}")
-    logger.info("🏥 Health check endpoint: /health")
-    logger.info("📊 Status endpoint: /status")
-    logger.info("🎉 API Gateway is ready to accept requests!")
+    try:
+        # Startup
+        startup_time = time.time() - getattr(app, 'start_time', time.time())
+        logger.info(f"Startup time: {startup_time:.2f} seconds")
+        logger.info(f"🚀 FastAPI application started successfully on port {PORT}")
+        logger.info("🏥 Health check endpoint: /health")
+        logger.info("📊 Status endpoint: /status")
+        logger.info("🎉 API Gateway is ready to accept requests!")
 
-    yield
+        yield
 
-    # Shutdown
-    logger.info("🛑 FastAPI application shutting down")
+        # Shutdown
+        logger.info("🛑 FastAPI application shutting down")
+    except Exception as e:
+        logger.error(f"❌ Error in lifespan handler: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+        raise
 
 # Track application start time for uptime calculations
 app_start_time = time.time()
@@ -76,14 +84,21 @@ app_start_time = time.time()
 logger.info("="*60)
 logger.info("🏗️ Creating FastAPI application...")
 
-app = FastAPI(
-    title="Knowledge Bot API Gateway",
-    version="1.0.0",
-    lifespan=lifespan
-)
+try:
+    app = FastAPI(
+        title="Knowledge Bot API Gateway",
+        version="1.0.0",
+        lifespan=lifespan
+    )
 
-# Store start time for uptime calculations
-app.start_time = app_start_time
+    # Store start time for uptime calculations
+    app.start_time = app_start_time
+    logger.info("✅ FastAPI application created successfully")
+
+except Exception as e:
+    logger.error(f"❌ Failed to create FastAPI application: {e}")
+    logger.error(f"Error type: {type(e).__name__}")
+    raise
 
 # Request logging middleware
 @app.middleware("http")

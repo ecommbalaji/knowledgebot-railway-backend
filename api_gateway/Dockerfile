@@ -63,4 +63,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 CMD echo "🎯 Starting API Gateway service..." && \
     echo "🌐 Listening on port 8080" && \
     echo "🏥 Health check endpoint: http://localhost:8080/health" && \
-    uvicorn main:app --host 0.0.0.0 --port 8080 --log-level info
+    echo "🐍 Python path: $(which python)" && \
+    echo "📁 Working directory: $(pwd)" && \
+    echo "📄 Files in directory:" && \
+    ls -la && \
+    echo "🔍 Testing Python import..." && \
+    python -c "import sys; print('Python version:', sys.version); print('Current dir:', sys.path[0])" && \
+    echo "🚀 Starting uvicorn..." && \
+    uvicorn main:app --host 0.0.0.0 --port 8080 --log-level info --access-log
