@@ -53,12 +53,14 @@ RUN mkdir -p /app/logs && \
     echo "📝 Logs directory created"
 
 # Expose port (Railway will set PORT environment variable)
-ARG PORT=8080
+# Align ARG default with the intended service port to avoid confusing image metadata
+ARG PORT=8000
 EXPOSE ${PORT}
 
 # Add health check (prefer API_GATEWAY_PORT, else PORT, else default)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD sh -c 'curl -f http://localhost:${API_GATEWAY_PORT:-${PORT:-8080}}/health || exit 1'
+# Make healthcheck more forgiving during cold starts: longer start period and more retries
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD sh -c 'curl -f http://localhost:${API_GATEWAY_PORT:-${PORT:-8000}}/health || exit 1'
 
 # Run the application with explicit module path and prefer API_GATEWAY_PORT, then PORT, then default
-CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${API_GATEWAY_PORT:-${PORT:-8080}} --log-level info --access-log'
+CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${API_GATEWAY_PORT:-${PORT:-8000}} --log-level info --access-log'

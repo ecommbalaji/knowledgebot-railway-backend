@@ -24,7 +24,8 @@ ARG PORT=8002
 EXPOSE ${PORT}
 
 # Add health check using PORT environment variable
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# More forgiving start-period to account for cold starts and heavy startup tasks
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD sh -c 'curl -f http://localhost:${WEBSITE_SCRAPING_PORT:-${PORT:-8002}}/health || exit 1'
 
 # Run the application with uvicorn - prefer WEBSITE_SCRAPING_PORT, else PORT, else default

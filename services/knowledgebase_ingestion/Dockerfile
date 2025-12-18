@@ -24,7 +24,8 @@ ARG PORT=8001
 EXPOSE ${PORT}
 
 # Add health check (prefer KB_INGESTION_PORT, else PLATFORM PORT, else default)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Increased start-period and retries to reduce premature restarts
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD sh -c 'curl -f http://localhost:${KB_INGESTION_PORT:-${PORT:-8001}}/health || exit 1'
 
 # Run the application with uvicorn - prefer KB_INGESTION_PORT, else PORT, else default

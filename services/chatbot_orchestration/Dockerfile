@@ -23,8 +23,8 @@ WORKDIR /app/services/chatbot_orchestration
 ARG PORT=8003
 EXPOSE ${PORT}
 
-# Add health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Add health check (more forgiving start-period for cold starts)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD sh -c 'curl -f http://localhost:${CHATBOT_ORCH_PORT:-${PORT:-8003}}/health || exit 1'
 
 # Run the application with uvicorn - prefer CHATBOT_ORCH_PORT, else PORT, else default
