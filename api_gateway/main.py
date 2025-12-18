@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import os
 import sys
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 # Load environment variables
 load_dotenv()
@@ -49,17 +50,12 @@ else:
 
 logger.info(f"🚀 Application will start on port {PORT}")
 
-logger.info("="*60)
-
-app = FastAPI(title="Knowledge Bot API Gateway", version="1.0.0")
-
-# Track application start time for uptime calculations
-app.start_time = time.time()
-
-@app.on_event("startup")
-async def startup_event():
-    """Log when FastAPI application starts successfully."""
-    startup_time = time.time() - app.start_time
+# Lifespan context manager for startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown events."""
+    # Startup
+    startup_time = time.time() - getattr(app, 'start_time', time.time())
     logger.info(".2f")
     logger.info(f"🚀 FastAPI application started successfully on port {PORT}")
     logger.info("📋 Registered routes:")
@@ -71,10 +67,24 @@ async def startup_event():
     logger.info("📊 Status endpoint: /status")
     logger.info("🎉 API Gateway is ready to accept requests!")
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Log when FastAPI application shuts down."""
+    yield
+
+    # Shutdown
     logger.info("🛑 FastAPI application shutting down")
+
+# Track application start time for uptime calculations
+app_start_time = time.time()
+
+logger.info("="*60)
+
+app = FastAPI(
+    title="Knowledge Bot API Gateway",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Store start time for uptime calculations
+app.start_time = app_start_time
 
 # Request logging middleware
 @app.middleware("http")
