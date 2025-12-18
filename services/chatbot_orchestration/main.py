@@ -896,7 +896,7 @@ async def review_response(session_id: str, review: HumanReviewRequest):
                     webhook_url,
                     json={
                         "session_id": session_id,
-                        "review": review.dict()
+                        "review": review.model_dump()
                     },
                     timeout=5.0
                 )

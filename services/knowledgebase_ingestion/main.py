@@ -172,10 +172,17 @@ async def upload_document(
         file_display_name = display_name or file.filename or "uploaded_file"
         original_filename = file.filename or "uploaded_file"
 
+        logger.info(f"📁 Processing upload: {original_filename} (display: {file_display_name})")
+
         # Get or create user
         email = user_email or settings.default_user_email
+        logger.info(f"👤 User: {email}")
+
         if railway_db:
             user_id = await get_or_create_user(email)
+            logger.info(f"🆔 User ID: {user_id}")
+        else:
+            logger.warning("⚠️  Database not available - user tracking disabled")
 
         # Gemini API requires file path, so write to temp file
         import tempfile
@@ -195,8 +202,9 @@ async def upload_document(
             r2_key = None
             r2_url = None
             if r2_storage:
+                logger.info("☁️  R2 storage is configured, attempting upload...")
                 try:
-                    logger.info(f"Uploading file to R2: {original_filename}")
+                    logger.info(f"📤 Uploading file to R2: {original_filename}")
                     r2_result = await r2_storage.upload_file(
                         file_path=tmp_path,
                         content_type=file.content_type or "application/octet-stream",
@@ -208,15 +216,19 @@ async def upload_document(
                     )
                     r2_key = r2_result['key']
                     r2_url = r2_result['url']
-                    logger.info(f"File uploaded to R2: {r2_key}")
+                    logger.info(f"✅ File uploaded to R2 successfully: {r2_key}")
+                    logger.info(f"🔗 R2 URL: {r2_url}")
                 except Exception as e:
-                    logger.error(f"R2 upload failed: {e}")
-                    # Continue with Gemini upload even if R2 fails
+                    logger.error(f"❌ R2 upload failed: {e}")
+                    logger.warning("⚠️  Continuing with Gemini upload despite R2 failure")
+            else:
+                logger.warning("⚠️  R2 storage not configured - skipping R2 upload")
 
             # Step 2: Calculate file hash
             sha256_hash = calculate_sha256(tmp_path)
 
             # Step 3: Upload to Gemini FileSearch
+            logger.info("🤖 Uploading file to Gemini FileSearch...")
             uploaded_file = genai_client.files.upload(
                 path=tmp_path,
                 config=dict(
@@ -225,7 +237,7 @@ async def upload_document(
                 )
             )
 
-            logger.info(f"Uploaded file to Gemini: {uploaded_file.name}, initial state: {uploaded_file.state.name}")
+            logger.info(f"✅ Uploaded file to Gemini: {uploaded_file.name}, initial state: {uploaded_file.state.name}")
 
             # Poll for ACTIVE state
             final_state = uploaded_file.state.name
@@ -364,6 +376,20 @@ async def list_files():
     except Exception as e:
         logger.error(f"Error listing files: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+
+@app.get("/status")
+async def get_service_status():
+    """Get service status and configuration information."""
+    return {
+        "service": "knowledgebase_ingestion",
+        "status": "healthy",
+        "r2_configured": r2_storage is not None,
+        "r2_bucket": r2_storage.bucket_name if r2_storage else None,
+        "r2_public_url": r2_storage.public_url if r2_storage else None,
+        "gemini_configured": genai_client is not None,
+        "database_configured": railway_db is not None,
+        "version": "1.0.0"
+    }
 
 
 @app.delete("/files/{file_name}")

@@ -1,5 +1,5 @@
 """API Gateway - Central entry point for all requests."""
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import httpx
@@ -37,7 +37,7 @@ logger.info(f"KNOWLEDGEBASE_INGESTION_URL: {os.getenv('KNOWLEDGEBASE_INGESTION_U
 logger.info(f"WEBSITE_SCRAPING_URL: {os.getenv('WEBSITE_SCRAPING_URL', 'http://localhost:8002')}")
 logger.info(f"CHATBOT_ORCHESTRATION_URL: {os.getenv('CHATBOT_ORCHESTRATION_URL', 'http://localhost:8003')}")
 # Get port configuration
-PORT = int(os.getenv('PORT', '8000'))
+PORT = int(os.getenv('PORT', '8080'))
 logger.info(f"PORT: {PORT}")
 
 # Check if required environment variables are set
@@ -58,14 +58,12 @@ async def lifespan(app: FastAPI):
     startup_time = time.time() - getattr(app, 'start_time', time.time())
     logger.info(".2f")
     logger.info(f"🚀 FastAPI application started successfully on port {PORT}")
-    logger.info("📋 Registered routes:")
-    for route in app.routes:
-        if hasattr(route, 'path') and hasattr(route, 'methods'):
-            methods = ', '.join(route.methods)
-            logger.info(f"  {methods} {route.path}")
     logger.info("🏥 Health check endpoint: /health")
     logger.info("📊 Status endpoint: /status")
     logger.info("🎉 API Gateway is ready to accept requests!")
+
+    # Note: Routes are logged after app creation, not during lifespan startup
+    # to avoid accessing routes before they're fully registered
 
     yield
 
@@ -132,6 +130,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Log registered routes after all middleware and routes are added
+logger.info("📋 Registered routes:")
+for route in app.routes:
+    if hasattr(route, 'path') and hasattr(route, 'methods'):
+        methods = ', '.join(route.methods)
+        logger.info(f"  {methods} {route.path}")
+logger.info(f"📊 Total routes registered: {len([r for r in app.routes if hasattr(r, 'path')])}")
 
 # Service URLs from environment
 KNOWLEDGEBASE_INGESTION_URL = os.getenv(
@@ -460,33 +466,64 @@ async def chat_endpoint(request: Request):
 
 
 @app.post("/api/v1/knowledgebase/upload")
-async def knowledgebase_upload_endpoint(request: Request):
+async def knowledgebase_upload_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+    display_name: Optional[str] = Form(None),
+    user_email: Optional[str] = Header(None, alias="X-User-Email")
+):
     """Route knowledgebase upload requests to knowledgebase ingestion service."""
     try:
-        # Get the request body (multipart form data)
-        body = await request.body()
-        headers = dict(request.headers)
+        logger.info(f"📁 Received file upload request: {file.filename}, size: {file.size if hasattr(file, 'size') else 'unknown'}")
+
+        # Prepare multipart form data for forwarding
+        files = {
+            'file': (file.filename, await file.read(), file.content_type)
+        }
+
+        # Prepare form data
+        data = {}
+        if display_name:
+            data['display_name'] = display_name
+
+        # Prepare headers
+        headers = {}
+        if user_email:
+            headers['X-User-Email'] = user_email
 
         # Remove hop-by-hop headers
+        request_headers = dict(request.headers)
         hop_by_hop_headers = [
             'connection', 'keep-alive', 'proxy-authenticate',
             'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
         ]
-        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers}
+        headers.update({k: v for k, v in request_headers.items()
+                       if k.lower() not in hop_by_hop_headers and k.lower() not in ['content-type', 'content-length']})
+
+        logger.info(f"📤 Forwarding upload to: {KNOWLEDGEBASE_INGESTION_URL}/upload")
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{KNOWLEDGEBASE_INGESTION_URL}/upload",
-                content=body,
+                files=files,
+                data=data,
                 headers=headers,
                 timeout=60.0  # Longer timeout for file uploads
             )
+
+            logger.info(f"📥 Upload response status: {resp.status_code}")
+
+            if resp.status_code == 200:
+                logger.info("✅ File upload completed successfully")
+            else:
+                logger.warning(f"⚠️  File upload returned status {resp.status_code}")
+
             return JSONResponse(
                 status_code=resp.status_code,
                 content=resp.json() if resp.headers.get('content-type', '').startswith('application/json') else resp.text
             )
     except Exception as e:
-        logger.error(f"Error routing knowledgebase upload request: {e}")
+        logger.error(f"❌ Error routing knowledgebase upload request: {e}")
         raise HTTPException(status_code=500, detail=f"Knowledgebase service error: {str(e)}")
 
 
