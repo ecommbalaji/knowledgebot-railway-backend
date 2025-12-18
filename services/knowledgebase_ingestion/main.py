@@ -3,7 +3,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-import google.generativeai as genai
+from google import genai
 import os
 import logging
 from dotenv import load_dotenv
@@ -36,10 +36,11 @@ app.add_middleware(
 
 # Initialize Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or settings.gemini_api_key
+genai_client = None
 if not GEMINI_API_KEY:
     logger.warning("GEMINI_API_KEY environment variable not set - API endpoints will fail")
 else:
-    genai.configure(api_key=GEMINI_API_KEY)
+    genai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Initialize R2 Storage (optional)
 r2_storage: Optional[R2Storage] = None
@@ -159,6 +160,9 @@ async def upload_document(
     Returns:
         UploadResponse with file information
     """
+    if not genai_client:
+        raise HTTPException(status_code=503, detail="Gemini API client not configured")
+
     r2_result = None
     db_record_id = None
     user_id = None
@@ -213,10 +217,12 @@ async def upload_document(
             sha256_hash = calculate_sha256(tmp_path)
 
             # Step 3: Upload to Gemini FileSearch
-            uploaded_file = genai.upload_file(
+            uploaded_file = genai_client.files.upload(
                 path=tmp_path,
-                display_name=file_display_name,
-                mime_type=file.content_type or "application/octet-stream"
+                config=dict(
+                    display_name=file_display_name,
+                    mime_type=file.content_type or "application/octet-stream"
+                )
             )
 
             logger.info(f"Uploaded file to Gemini: {uploaded_file.name}, initial state: {uploaded_file.state.name}")
@@ -226,7 +232,7 @@ async def upload_document(
             gemini_processed_at = None
             try:
                 for _ in range(15):  # Wait up to 30 seconds
-                    current_file = genai.get_file(uploaded_file.name)
+                    current_file = genai_client.files.get(name=uploaded_file.name)
                     final_state = current_file.state.name
                     logger.info(f"Polling file {uploaded_file.name} state: {final_state}")
 
@@ -332,8 +338,11 @@ async def upload_document(
 @app.get("/files", response_model=FilesResponse)
 async def list_files():
     """List all uploaded files in Gemini FileSearch."""
+    if not genai_client:
+        raise HTTPException(status_code=503, detail="Gemini API client not configured")
+
     try:
-        files = genai.list_files()
+        files = genai_client.files.list()
 
         file_list = []
         for file in files:
@@ -360,10 +369,13 @@ async def list_files():
 @app.delete("/files/{file_name}")
 async def delete_file(file_name: str):
     """Delete a file from Gemini FileSearch, R2 storage, and database."""
+    if not genai_client:
+        raise HTTPException(status_code=503, detail="Gemini API client not configured")
+
     try:
         # First, delete from Gemini FileSearch
         try:
-            genai.delete_file(file_name)
+            genai_client.files.delete(name=file_name)
             logger.info(f"Deleted file from Gemini FileSearch: {file_name}")
         except Exception as e:
             logger.warning(f"Failed to delete from Gemini FileSearch: {e}")

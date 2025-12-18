@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 import uuid
 from datetime import datetime
-import google.generativeai as genai
+from google import genai
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
 from pydantic_ai.models.openai import OpenAIModel
@@ -40,10 +40,11 @@ app.add_middleware(
 
 # Initialize Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or settings.gemini_api_key
+genai_client = None
 if not GEMINI_API_KEY:
     logger.warning("GEMINI_API_KEY environment variable not set - some features will fail")
 else:
-    genai.configure(api_key=GEMINI_API_KEY)
+    genai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Initialize OpenAI model for Pydantic AI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or settings.openai_api_key
@@ -438,14 +439,21 @@ async def search_internet(
 async def search_knowledge_base(query: Annotated[str, "The search query to find relevant information in uploaded documents"]) -> List[SearchResult]:
     """
     Search the knowledge base using Gemini FileSearch for relevant information.
-    
+
     This tool searches through uploaded documents and scraped content to find
     information relevant to the user's query.
     """
+    if not genai_client:
+        return [SearchResult(
+            file_name="System_Error",
+            content="Gemini API client not configured - cannot search knowledge base",
+            relevance_score=0.0
+        )]
+
     try:
         # List all files in Gemini FileSearch
         # Convert generator to list
-        all_files = list(genai.list_files())
+        all_files = list(genai_client.files.list())
         
         if not all_files:
             logger.warning("No files found in FileSearch store")
@@ -468,33 +476,30 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
         logger.info(f"Searching {len(files_to_search)} files with Gemini 2.5 Flash Lite for query: {query}")
 
         try:
-            # Initialize Gemini 2.5 Flash Lite for retrieval (cheaper, fast)
-            # We treat it as a "Neural Retriever"
-            model = genai.GenerativeModel('gemini-2.5-flash-lite')
-            
             # Construct the retrieval prompt
             retrieval_prompt = f"""
             You are a specialized retrieval system. Your task is to extract information from the provided files to answer the user's query.
-            
+
             User Query: "{query}"
-            
+
             Instructions:
             1. Search through the attached files for information relevant to the query.
             2. Extract direct quotes, data points, and context that answer the question.
             3. If the files contain the answer, provide a detailed summary of the relevant information.
             4. If the files do NOT contain the answer, state "No relevant information found in the knowledge base."
-            
+
             Output Format:
             - Source File: [Filename]
             - Relevant Content: [Extracted Information]
             """
-            
-            # Generate content using the model with the files attached
-            # Gemini Python SDK allows passing file objects directly in the content list
-            response = await model.generate_content_async(
-                contents=[*files_to_search, retrieval_prompt]
+
+            # Generate content using the new API with files attached
+            contents = [*files_to_search, retrieval_prompt]
+            response = genai_client.models.generate_content(
+                model='gemini-2.5-flash-lite',
+                contents=contents
             )
-            
+
             # Create a single consolidated result from the LLM's retrieval
             # This acts as the "context" for the downstream orchestration agent
             return [SearchResult(

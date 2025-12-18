@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from typing import Optional, Dict, Any
-import google.generativeai as genai
+from google import genai
 import os
 import logging
 from dotenv import load_dotenv
@@ -32,7 +32,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable is required")
 
-genai.configure(api_key=GEMINI_API_KEY)
+genai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 class ScrapeRequest(BaseModel):
@@ -151,9 +151,9 @@ async def scrape_website(request: ScrapeRequest):
                 
                 # Upload to Gemini FileSearch
                 logger.info(f"Uploading scraped content to Gemini FileSearch: {display_name}")
-                uploaded_file = genai.upload_file(
+                uploaded_file = genai_client.files.upload(
                     path=tmp_path,
-                    display_name=display_name
+                    config=dict(display_name=display_name)
                 )
                 
                 # Wait for file processing
@@ -173,7 +173,7 @@ async def scrape_website(request: ScrapeRequest):
                     
                     # Wait up to 30 seconds for processing
                     for _ in range(15):
-                        gf_file = genai.get_file(uploaded_file.name)
+                        gf_file = genai_client.files.get(name=uploaded_file.name)
                         logger.info(f"File {gf_file.name} state: {gf_file.state.name}")
                         
                         if gf_file.state.name == "ACTIVE":
