@@ -53,11 +53,12 @@ RUN mkdir -p /app/logs && \
     echo "📝 Logs directory created"
 
 # Expose port (Railway will set PORT environment variable)
-EXPOSE 8080
+ARG PORT=8080
+EXPOSE ${PORT}
 
-# Add health check
+# Add health check (uses PORT env var at runtime)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD sh -c 'curl -f http://localhost:${PORT:-8080}/health || exit 1'
 
-# Run the application with explicit module path
-CMD python -m uvicorn main:app --host 0.0.0.0 --port 8080 --log-level info --access-log
+# Run the application with explicit module path and respect PORT env var at runtime
+CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level info --access-log'

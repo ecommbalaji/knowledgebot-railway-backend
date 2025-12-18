@@ -20,7 +20,8 @@ COPY shared ./shared/
 WORKDIR /app/services/website_scraping
 
 # Expose port
-EXPOSE 8002
+ARG PORT=8002
+EXPOSE ${PORT}
 
 # Add health check using PORT environment variable
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

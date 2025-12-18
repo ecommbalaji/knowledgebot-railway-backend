@@ -20,7 +20,8 @@ COPY shared ./shared/
 WORKDIR /app/services/chatbot_orchestration
 
 # Expose port
-EXPOSE 8003
+ARG PORT=8003
+EXPOSE ${PORT}
 
 # Add health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
