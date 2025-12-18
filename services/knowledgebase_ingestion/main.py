@@ -260,6 +260,11 @@ async def upload_document(
                             'uploaded_by': email
                         }
                     )
+                    # Debug: log the raw R2 upload result for troubleshooting
+                    try:
+                        logger.info(f"R2 upload result (raw): {r2_result}")
+                    except Exception:
+                        logger.debug("Could not stringify r2_result")
                     r2_key = r2_result.get('key')
                     r2_url = r2_result.get('url')
                     is_private = r2_result.get('is_private', False)
@@ -288,6 +293,12 @@ async def upload_document(
             )
 
             logger.info(f"✅ Uploaded file to Gemini: {uploaded_file.name}, initial state: {uploaded_file.state.name}")
+
+            # Debug: log additional Gemini file attributes to help trace visibility
+            try:
+                logger.info(f"Gemini uploaded file attributes: name={getattr(uploaded_file, 'name', None)}, uri={getattr(uploaded_file, 'uri', None)}, display_name={getattr(uploaded_file, 'display_name', None)}")
+            except Exception:
+                logger.debug("Could not log uploaded_file attributes")
 
             # Poll for ACTIVE state
             final_state = uploaded_file.state.name
