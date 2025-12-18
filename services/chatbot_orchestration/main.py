@@ -1,8 +1,7 @@
-"""Chatbot Orchestration Service - Pydantic AI Agent with RAG via Gemini FileSearch."""
+"""Chatbot Orchestration Service - Pydantic AI Agent with intelligent data source routing."""
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Annotated
 from typing import Optional, List, Dict, Any, Annotated
 import os
 import logging
@@ -15,6 +14,14 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
 from pydantic_ai.models.openai import OpenAIModel
 import asyncio
+import sys
+from pathlib import Path
+import json
+
+# Add shared directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from shared.config import settings
+from shared.db import init_railway_db, init_neon_db, railway_db, neon_db
 
 load_dotenv()
 
@@ -31,27 +38,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Gemini (optional for healthcheck)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Initialize Gemini
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or settings.gemini_api_key
 if not GEMINI_API_KEY:
     logger.warning("GEMINI_API_KEY environment variable not set - some features will fail")
 else:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# Initialize OpenAI model for Pydantic AI (optional for healthcheck)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Initialize OpenAI model for Pydantic AI
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or settings.openai_api_key
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY environment variable not set - chat endpoints will fail")
-else:
-    # Model initialization will happen when needed
-    pass
 
-MODEL_NAME = os.getenv("CHATBOT_MODEL", "gpt-4o")
-TEMPERATURE = float(os.getenv("CHATBOT_TEMPERATURE", "0.7"))
-MAX_TOKENS = int(os.getenv("CHATBOT_MAX_TOKENS", "2000"))
+MODEL_NAME = os.getenv("CHATBOT_MODEL", settings.chatbot_model)
+TEMPERATURE = float(os.getenv("CHATBOT_TEMPERATURE", str(settings.chatbot_temperature)))
+MAX_TOKENS = int(os.getenv("CHATBOT_MAX_TOKENS", str(settings.chatbot_max_tokens)))
+
+# Initialize Tavily for internet search (optional)
+tavily_client = None
+if settings.tavily_api_key and settings.enable_internet_search:
+    try:
+        from tavily import TavilyClient
+        tavily_client = TavilyClient(api_key=settings.tavily_api_key)
+        logger.info("Tavily internet search initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Tavily: {e}")
 
 # In-memory session storage
 sessions: Dict[str, Dict[str, Any]] = {}
+
+# Initialize databases on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database connections on startup."""
+    # Initialize Railway PostgreSQL
+    if settings.railway_postgres_url:
+        try:
+            await init_railway_db(settings.railway_postgres_url)
+            logger.info("Railway PostgreSQL database initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Railway PostgreSQL: {e}")
+    
+    # Initialize Neon DB
+    if settings.neon_db_url:
+        try:
+            await init_neon_db(settings.neon_db_url)
+            logger.info("Neon DB database initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Neon DB: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database connections on shutdown."""
+    if railway_db:
+        await railway_db.disconnect()
+    if neon_db:
+        await neon_db.disconnect()
 
 
 # Pydantic models for structured outputs
@@ -67,6 +109,7 @@ class ChatResponse(BaseModel):
     answer: str = Field(description="The answer to the user's question")
     sources: List[SearchResult] = Field(default_factory=list, description="Sources used for the answer")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score for the answer")
+    data_sources_used: List[str] = Field(default_factory=list, description="Data sources used: rag, postgres, neon_db, internet")
 
 
 class HumanReviewRequest(BaseModel):
@@ -105,9 +148,294 @@ else:
     logger.warning("OpenAI model not initialized - OPENAI_API_KEY is missing")
 
 
-# Tool for querying Gemini FileSearch
-# Tool for querying Gemini FileSearch
-async def search_knowledge_base(query: Annotated[str, "The search query to find relevant information"]) -> List[SearchResult]:
+# Tool for querying Railway PostgreSQL (file metadata, user data)
+async def query_railway_postgres(
+    query: Annotated[str, "SQL-like query description or natural language question about file uploads, users, or metrics"]
+) -> str:
+    """
+    Query Railway PostgreSQL database for file metadata, user information, or metrics.
+    
+    Use this for questions about:
+    - Uploaded files and their metadata
+    - User information (non-PII only)
+    - System metrics and analytics
+    - File upload history
+    
+    IMPORTANT: Never expose PII (personally identifiable information) like emails, names, or personal data.
+    Only return aggregated statistics, file metadata, and anonymized information.
+    """
+    if not railway_db:
+        return "Railway PostgreSQL database is not configured."
+    
+    try:
+        # Parse the query and construct appropriate SQL
+        query_lower = query.lower()
+        
+        # File-related queries
+        if any(word in query_lower for word in ['file', 'upload', 'document', 'document']):
+            if 'count' in query_lower or 'total' in query_lower or 'number' in query_lower:
+                result = await railway_db.fetchval(
+                    "SELECT COUNT(*) FROM file_uploads WHERE gemini_state = 'ACTIVE'"
+                )
+                return f"Total active files in the system: {result}"
+            elif 'recent' in query_lower or 'latest' in query_lower:
+                files = await railway_db.fetch(
+                    """
+                    SELECT display_name, mime_type, size_bytes, uploaded_at
+                    FROM file_uploads
+                    WHERE gemini_state = 'ACTIVE'
+                    ORDER BY uploaded_at DESC
+                    LIMIT 5
+                    """
+                )
+                if files:
+                    result = "Recent uploaded files:\n"
+                    for f in files:
+                        result += f"- {f['display_name']} ({f['mime_type']}, {f['size_bytes']} bytes, uploaded {f['uploaded_at']})\n"
+                    return result
+                return "No recent files found."
+            else:
+                # General file info
+                files = await railway_db.fetch(
+                    """
+                    SELECT display_name, mime_type, size_bytes, uploaded_at
+                    FROM file_uploads
+                    WHERE gemini_state = 'ACTIVE'
+                    ORDER BY uploaded_at DESC
+                    LIMIT 10
+                    """
+                )
+                if files:
+                    result = f"Found {len(files)} active files:\n"
+                    for f in files:
+                        result += f"- {f['display_name']} ({f['mime_type']})\n"
+                    return result
+                return "No files found in the database."
+        
+        # Metrics queries
+        elif any(word in query_lower for word in ['metric', 'statistic', 'analytics', 'usage']):
+            metrics = await railway_db.fetch(
+                """
+                SELECT metric_name, SUM(value::numeric) as total_value, unit
+                FROM metrics
+                WHERE recorded_at > NOW() - INTERVAL '7 days'
+                GROUP BY metric_name, unit
+                ORDER BY total_value DESC
+                LIMIT 10
+                """
+            )
+            if metrics:
+                result = "Recent metrics (last 7 days):\n"
+                for m in metrics:
+                    result += f"- {m['metric_name']}: {m['total_value']} {m['unit'] or ''}\n"
+                return result
+            return "No metrics found."
+        
+        # Default: return file count
+        count = await railway_db.fetchval("SELECT COUNT(*) FROM file_uploads WHERE gemini_state = 'ACTIVE'")
+        return f"Database contains {count} active files. Please be more specific about what information you need."
+        
+    except Exception as e:
+        logger.error(f"Error querying Railway PostgreSQL: {e}")
+        return f"Error querying database: {str(e)}"
+
+
+# Tool for querying Neon DB (business data)
+async def query_neon_db(
+    query: Annotated[str, "Natural language question about business data: products, orders, customers, sales, inventory"]
+) -> str:
+    """
+    Query Neon DB business database for product, order, customer, sales, or inventory information.
+    
+    Use this for questions about:
+    - Products and product catalog
+    - Orders and transactions
+    - Sales analytics and trends
+    - Inventory levels
+    - Customer segments (anonymized, no PII)
+    
+    IMPORTANT: Never expose PII. Only return aggregated business data, product information, and anonymized statistics.
+    """
+    if not neon_db:
+        return "Neon DB business database is not configured."
+    
+    try:
+        query_lower = query.lower()
+        
+        # Product queries
+        if any(word in query_lower for word in ['product', 'item', 'catalog']):
+            if 'available' in query_lower or 'stock' in query_lower:
+                products = await neon_db.fetch(
+                    """
+                    SELECT product_name, category, price, stock_quantity, rating
+                    FROM products
+                    WHERE is_available = TRUE AND stock_quantity > 0
+                    ORDER BY rating DESC NULLS LAST
+                    LIMIT 10
+                    """
+                )
+                if products:
+                    result = "Available products:\n"
+                    for p in products:
+                        result += f"- {p['product_name']} ({p['category']}) - ${p['price']}, Stock: {p['stock_quantity']}, Rating: {p['rating'] or 'N/A'}\n"
+                    return result
+                return "No available products found."
+            elif 'category' in query_lower:
+                categories = await neon_db.fetch(
+                    """
+                    SELECT category, COUNT(*) as count, AVG(price) as avg_price
+                    FROM products
+                    WHERE is_available = TRUE
+                    GROUP BY category
+                    ORDER BY count DESC
+                    """
+                )
+                if categories:
+                    result = "Products by category:\n"
+                    for c in categories:
+                        result += f"- {c['category']}: {c['count']} products, Average price: ${float(c['avg_price']):.2f}\n"
+                    return result
+                return "No category data found."
+            else:
+                products = await neon_db.fetch(
+                    "SELECT product_name, category, price FROM products WHERE is_available = TRUE LIMIT 10"
+                )
+                if products:
+                    result = "Sample products:\n"
+                    for p in products:
+                        result += f"- {p['product_name']} ({p['category']}) - ${p['price']}\n"
+                    return result
+                return "No products found."
+        
+        # Order queries
+        elif any(word in query_lower for word in ['order', 'transaction', 'purchase']):
+            if 'recent' in query_lower or 'latest' in query_lower:
+                orders = await neon_db.fetch(
+                    """
+                    SELECT order_id, order_status, total_amount, order_date
+                    FROM orders
+                    ORDER BY order_date DESC
+                    LIMIT 5
+                    """
+                )
+                if orders:
+                    result = "Recent orders:\n"
+                    for o in orders:
+                        result += f"- Order {o['order_id']}: ${o['total_amount']} ({o['order_status']}) on {o['order_date']}\n"
+                    return result
+                return "No recent orders found."
+            elif 'total' in query_lower or 'revenue' in query_lower:
+                revenue = await neon_db.fetchval(
+                    "SELECT SUM(total_amount) FROM orders WHERE order_status != 'cancelled'"
+                )
+                count = await neon_db.fetchval(
+                    "SELECT COUNT(*) FROM orders WHERE order_status != 'cancelled'"
+                )
+                return f"Total revenue: ${float(revenue or 0):.2f} from {count} orders."
+            else:
+                orders = await neon_db.fetch(
+                    """
+                    SELECT order_status, COUNT(*) as count, SUM(total_amount) as total
+                    FROM orders
+                    GROUP BY order_status
+                    """
+                )
+                if orders:
+                    result = "Orders by status:\n"
+                    for o in orders:
+                        result += f"- {o['order_status']}: {o['count']} orders, Total: ${float(o['total'] or 0):.2f}\n"
+                    return result
+                return "No order data found."
+        
+        # Sales analytics
+        elif any(word in query_lower for word in ['sales', 'revenue', 'analytics', 'trend']):
+            analytics = await neon_db.fetch(
+                """
+                SELECT category, SUM(total_revenue) as revenue, SUM(total_orders) as orders
+                FROM sales_analytics
+                WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY category
+                ORDER BY revenue DESC
+                LIMIT 5
+                """
+            )
+            if analytics:
+                result = "Sales by category (last 30 days):\n"
+                for a in analytics:
+                    result += f"- {a['category']}: ${float(a['revenue'] or 0):.2f} revenue, {a['orders']} orders\n"
+                return result
+            return "No sales analytics data found."
+        
+        # Inventory queries
+        elif any(word in query_lower for word in ['inventory', 'stock', 'warehouse']):
+            inventory = await neon_db.fetch(
+                """
+                SELECT p.product_name, i.quantity_available, i.warehouse_location
+                FROM inventory i
+                JOIN products p ON i.product_id = p.product_id
+                WHERE i.quantity_available < i.reorder_level
+                ORDER BY i.quantity_available ASC
+                LIMIT 10
+                """
+            )
+            if inventory:
+                result = "Low stock items:\n"
+                for inv in inventory:
+                    result += f"- {inv['product_name']}: {inv['quantity_available']} units at {inv['warehouse_location']}\n"
+                return result
+            return "All inventory levels are adequate."
+        
+        # Default response
+        return "Please specify what business data you need: products, orders, sales, or inventory."
+        
+    except Exception as e:
+        logger.error(f"Error querying Neon DB: {e}")
+        return f"Error querying business database: {str(e)}"
+
+
+# Tool for internet search
+async def search_internet(
+    query: Annotated[str, "Search query for current information from the internet"]
+) -> str:
+    """
+    Search the internet for current information using Tavily API.
+    
+    Use this for questions about:
+    - Current events and news
+    - Real-time information
+    - General knowledge not in the knowledge base
+    - Recent developments or updates
+    
+    Only use when information is not available in RAG, PostgreSQL, or Neon DB.
+    """
+    if not tavily_client:
+        return "Internet search is not configured or enabled."
+    
+    try:
+        response = tavily_client.search(
+            query=query,
+            search_depth="basic",
+            max_results=3
+        )
+        
+        if response.get('results'):
+            result_text = f"Internet search results for '{query}':\n\n"
+            for idx, result in enumerate(response['results'][:3], 1):
+                result_text += f"{idx}. {result.get('title', 'No title')}\n"
+                result_text += f"   {result.get('content', 'No content')[:200]}...\n"
+                if result.get('url'):
+                    result_text += f"   Source: {result['url']}\n"
+                result_text += "\n"
+            return result_text
+        return f"No internet search results found for '{query}'."
+        
+    except Exception as e:
+        logger.error(f"Error searching internet: {e}")
+        return f"Error performing internet search: {str(e)}"
+
+
+# Tool for querying Gemini FileSearch (RAG)
+async def search_knowledge_base(query: Annotated[str, "The search query to find relevant information in uploaded documents"]) -> List[SearchResult]:
     """
     Search the knowledge base using Gemini FileSearch for relevant information.
     
@@ -190,21 +518,59 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
         return []
 
 
-# System prompt with dynamic context
+# System prompt with intelligent routing instructions
 def get_system_prompt(file_context: Optional[List[SearchResult]] = None) -> str:
-    """Generate dynamic system prompt with optional file context."""
-    base_prompt = """You are a helpful knowledge assistant chatbot.
-    
-    Your role is to answer questions based on the information provided in your knowledge base (files, scraped websites, etc.).
-    
-    When answering questions:
-    1. Use the search_knowledge_base tool to find relevant information
-    2. Provide accurate answers based on the knowledge base content
-    3. If information is not available in the context, clearly indicate that
-    4. Be helpful and conversational"""
+    """Generate dynamic system prompt with intelligent data source routing."""
+    base_prompt = """You are an intelligent knowledge assistant chatbot with access to multiple data sources.
+
+Your role is to intelligently route user queries to the appropriate data source(s) to provide accurate answers.
+
+AVAILABLE DATA SOURCES AND WHEN TO USE THEM:
+
+1. **search_knowledge_base** (RAG - Gemini FileSearch):
+   - Use for questions about content in uploaded documents, PDFs, text files
+   - Use for questions about scraped website content
+   - Use when the user asks about specific documents or file contents
+   - This searches through semantically indexed documents
+
+2. **query_railway_postgres** (Railway PostgreSQL):
+   - Use for questions about file uploads, file metadata, upload history
+   - Use for system metrics, analytics, and usage statistics
+   - Use for questions about the knowledge base system itself
+   - NEVER expose PII (personally identifiable information) - only return aggregated/anonymized data
+
+3. **query_neon_db** (Neon DB - Business Database):
+   - Use for questions about products, product catalog, pricing
+   - Use for questions about orders, transactions, sales
+   - Use for questions about inventory, stock levels, warehouse data
+   - Use for sales analytics, revenue trends, business metrics
+   - NEVER expose PII - only return business data and anonymized statistics
+
+4. **search_internet** (Tavily - Internet Search):
+   - Use ONLY when information is not available in other sources
+   - Use for current events, real-time information, recent news
+   - Use for general knowledge questions not in the knowledge base
+   - Use as a last resort after checking other sources
+
+ROUTING STRATEGY:
+- Analyze the user's question to determine the most appropriate data source(s)
+- You can use multiple sources if needed to provide a complete answer
+- Always prioritize RAG (search_knowledge_base) for document-related questions
+- Use PostgreSQL for system/file metadata questions
+- Use Neon DB for business/product/order questions
+- Use internet search only when other sources don't have the information
+- Never reveal PII (emails, names, personal customer data) - only return anonymized/aggregated data
+- Be transparent about which data sources you used
+
+When answering:
+1. Intelligently select the appropriate tool(s) based on the question
+2. Combine information from multiple sources if needed
+3. Provide accurate, helpful answers
+4. Clearly indicate when information is not available
+5. Be conversational and helpful"""
     
     if file_context:
-        context_section = "\n\nAvailable knowledge base files:\n"
+        context_section = "\n\nAvailable knowledge base files (from RAG):\n"
         for idx, result in enumerate(file_context, 1):
             context_section += f"{idx}. {result.file_name}\n"
         return base_prompt + context_section
@@ -221,20 +587,35 @@ def create_session_dependency(session_id: str) -> ChatSessionDeps:
     """Create session dependency instance."""
     return ChatSessionDeps(session_id=session_id)
 
-# Initialize base agent
+# Initialize base agent with all tools
 def create_agent(file_context: Optional[List[SearchResult]] = None) -> Optional[Agent]:
-    """Create a Pydantic AI agent with dependency injection configuration."""
+    """Create a Pydantic AI agent with intelligent data source routing."""
     
     # Check if model is available
     if openai_model is None:
         logger.error("Cannot create agent - OpenAI API key not configured")
         return None
 
-    # Create agent with system prompt and dependencies configuration
-    # We pass the TYPE of the dependency here, not an instance
+    # Build list of available tools
+    tools = [search_knowledge_base]
+    
+    # Add PostgreSQL tool if available
+    if railway_db:
+        tools.append(query_railway_postgres)
+    
+    # Add Neon DB tool if available
+    if neon_db:
+        tools.append(query_neon_db)
+    
+    # Add internet search tool if available
+    if tavily_client:
+        tools.append(search_internet)
+
+    # Create agent with system prompt, tools, and dependencies
     agent = Agent(
         openai_model,
         system_prompt=get_system_prompt(file_context),
+        tools=tools,
         deps_type=ChatSessionDeps,
     )
     
@@ -324,12 +705,95 @@ async def chat(request: ChatRequest):
              # fallback for raw response access attempt
              response_text = result.response.text if hasattr(result.response, 'text') else str(result.response)
         
+        # Determine which data sources were used based on tool calls
+        data_sources_used = []
+        if request.use_rag and file_context:
+            data_sources_used.append("rag")
+        
+        # Check if tools were called (this is a simplified check)
+        # In a real implementation, you'd track tool calls from the agent result
+        if hasattr(result, 'tool_calls') and result.tool_calls:
+            for tool_call in result.tool_calls:
+                tool_name = tool_call.get('name', '') if isinstance(tool_call, dict) else str(tool_call)
+                if 'postgres' in tool_name.lower() or 'railway' in tool_name.lower():
+                    if 'postgres' not in data_sources_used:
+                        data_sources_used.append("postgres")
+                elif 'neon' in tool_name.lower():
+                    if 'neon_db' not in data_sources_used:
+                        data_sources_used.append("neon_db")
+                elif 'internet' in tool_name.lower() or 'search' in tool_name.lower():
+                    if 'internet' not in data_sources_used:
+                        data_sources_used.append("internet")
+        
         # Build structured response
         response_data = ChatResponse(
             answer=response_text,
             sources=file_context,
-            confidence=0.8  # Default confidence
+            confidence=0.8,  # Default confidence
+            data_sources_used=data_sources_used if data_sources_used else ["rag"] if file_context else []
         )
+        
+        # Save message to database with data source tracking
+        if railway_db:
+            try:
+                # Get or create session in DB
+                session_db_id = await railway_db.fetchval(
+                    "SELECT id FROM chat_sessions WHERE session_id = $1",
+                    session_id
+                )
+                
+                if not session_db_id:
+                    session_db_id = await railway_db.fetchval(
+                        """
+                        INSERT INTO chat_sessions (session_id, is_active, message_count)
+                        VALUES ($1, $2, $3)
+                        RETURNING id
+                        """,
+                        session_id,
+                        True,
+                        0
+                    )
+                
+                # Save user message
+                await railway_db.execute(
+                    """
+                    INSERT INTO chat_messages (session_id, role, content, used_rag, used_postgres, used_neon_db, used_internet_search)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """,
+                    session_db_id,
+                    "user",
+                    request.message,
+                    "rag" in data_sources_used,
+                    "postgres" in data_sources_used,
+                    "neon_db" in data_sources_used,
+                    "internet" in data_sources_used
+                )
+                
+                # Save assistant message
+                await railway_db.execute(
+                    """
+                    INSERT INTO chat_messages (session_id, role, content, used_rag, used_postgres, used_neon_db, used_internet_search, confidence_score, sources, usage_info)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    """,
+                    session_db_id,
+                    "assistant",
+                    response_data.answer,
+                    "rag" in data_sources_used,
+                    "postgres" in data_sources_used,
+                    "neon_db" in data_sources_used,
+                    "internet" in data_sources_used,
+                    response_data.confidence,
+                    json.dumps([{"file_name": s.file_name, "relevance_score": s.relevance_score} for s in response_data.sources]),
+                    json.dumps(usage_info) if usage_info else None
+                )
+                
+                # Update session message count
+                await railway_db.execute(
+                    "UPDATE chat_sessions SET message_count = message_count + 2, last_activity_at = CURRENT_TIMESTAMP WHERE id = $1",
+                    session_db_id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save chat message to database: {e}")
         
         # Update session history
         session["messages"].append({

@@ -32,6 +32,23 @@ class Settings(BaseSettings):
     gemini_filesearch_project_id: Optional[str] = None
     gemini_filesearch_location: str = "us-central1"
     
+    # Cloudflare R2 Configuration (connection string format)
+    # Format: r2://access_key_id:secret_access_key@account_id/bucket_name?public_url=https://pub-xxxxx.r2.dev
+    cloudflare_r2_url: Optional[str] = None
+    
+    # Railway PostgreSQL Configuration (connection URL only)
+    railway_postgres_url: Optional[str] = None
+    
+    # Neon DB Configuration (connection URL only)
+    neon_db_url: Optional[str] = None
+    
+    # Internet Search Configuration (Tavily API)
+    tavily_api_key: Optional[str] = None
+    enable_internet_search: bool = False
+    
+    # User Context (for tracking uploads)
+    default_user_email: str = "globistaan@gmail.com"
+    
     class Config:
         env_file = ".env"
         case_sensitive = False
