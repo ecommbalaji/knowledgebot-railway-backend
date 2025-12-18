@@ -1,27 +1,191 @@
-@app.delete("/files/{file_name}")
-async def delete_file(file_name: str):
-    """Delete a scraped website file from Gemini FileSearch and database."""
+"""Website Scraping Service - Handles website scraping using Crawl4AI and Gemini FileSearch."""
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, HttpUrl
+from typing import Optional, Dict, Any
+import google.generativeai as genai
+import os
+import logging
+from dotenv import load_dotenv
+import asyncio
+from crawl4ai import AsyncWebCrawler
+from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
+import tempfile
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Website Scraping Service", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize Gemini
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable is required")
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+
+class ScrapeRequest(BaseModel):
+    url: str
+    max_depth: Optional[int] = 1
+    max_pages: Optional[int] = 10
+    include_patterns: Optional[list[str]] = None
+    exclude_patterns: Optional[list[str]] = None
+    wait_for: Optional[str] = None
+    js_code: Optional[str] = None
+    screenshot: Optional[bool] = False
+
+
+class ScrapeResponse(BaseModel):
+    success: bool
+    message: str
+    file_name: Optional[str] = None
+    file_info: Optional[Dict[str, Any]] = None
+    scraped_urls: Optional[list[str]] = None
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "website_scraping"}
+
+
+@app.post("/scrape", response_model=ScrapeResponse)
+async def scrape_website(request: ScrapeRequest):
+    """
+    Scrape a website and upload to Gemini FileSearch.
+    
+    Args:
+        request: ScrapeRequest with URL and options
+    
+    Returns:
+        ScrapeResponse with upload information
+    """
     try:
-        # Delete from Gemini FileSearch
-        try:
-            genai.delete_file(file_name)
-            logger.info(f"Deleted scraped website from Gemini FileSearch: {file_name}")
-        except Exception as e:
-            logger.warning(f"Failed to delete from Gemini FileSearch: {e}")
+        # Scrape the website using Crawl4AI
+        logger.info(f"Scraping website: {request.url}")
         
-        # Delete from database
-        if railway_db:
-            try:
-                deleted = await railway_db.execute(
-                    "DELETE FROM scraped_websites WHERE gemini_file_name = $1",
-                    file_name
+        # Configure browser
+        browser_config = BrowserConfig(verbose=False, headless=True)
+        
+        # Configure crawl options using CrawlerRunConfig
+        run_config = CrawlerRunConfig()
+        
+        # Note: crawl4ai 0.7.x API changes - single URL crawling via arun()
+        # For multi-page crawling, we'll use deep crawling or arun_many in future
+        # For MVP, we'll scrape single page
+        
+        async with AsyncWebCrawler(config=browser_config) as crawler:
+            # Execute crawl
+            result = await crawler.arun(url=request.url, config=run_config)
+            
+            if not result.success:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Scraping failed: {result.error_message if hasattr(result, 'error_message') else 'Unknown error'}"
                 )
-                logger.info(f"Deleted scraped website from database: {deleted} records")
-            except Exception as e:
-                logger.warning(f"Failed to delete from database: {e}")
-        
-        return {"success": True, "message": f"Scraped website file {file_name} deleted"}
-        
+            
+            # Extract content - use markdown property (0.7.x API)
+            scraped_content = ""
+            if hasattr(result, 'markdown'):
+                # markdown is a MarkdownOutput object with raw_markdown and fit_markdown
+                if hasattr(result.markdown, 'raw_markdown'):
+                    scraped_content = result.markdown.raw_markdown
+                elif hasattr(result.markdown, 'fit_markdown'):
+                    scraped_content = result.markdown.fit_markdown
+                else:
+                    scraped_content = str(result.markdown)
+            
+            if not scraped_content and hasattr(result, 'html'):
+                scraped_content = result.html
+            if not scraped_content and hasattr(result, 'cleaned_html'):
+                scraped_content = result.cleaned_html
+            
+            if not scraped_content:
+                raise HTTPException(
+                    status_code=500,
+                    detail="No content extracted from website"
+                )
+            
+            # Get scraped URLs
+            scraped_urls = [request.url]
+            if hasattr(result, 'links') and result.links:
+                # links is a dict with 'internal' and 'external' keys in 0.7.x
+                if isinstance(result.links, dict):
+                    if 'internal' in result.links:
+                        internal_links = result.links['internal']
+                        if isinstance(internal_links, list):
+                            # Extract href from link dicts
+                            urls = [link.get('href', link) if isinstance(link, dict) else link for link in internal_links[:request.max_pages or 10]]
+                            scraped_urls.extend(urls)
+                elif isinstance(result.links, list):
+                    scraped_urls.extend(result.links[:request.max_pages or 10])
+            
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.md',
+                delete=False,
+                encoding='utf-8'
+            ) as tmp_file:
+                tmp_file.write(scraped_content)
+                tmp_path = tmp_file.name
+            
+            try:
+                # Generate display name from URL
+                from urllib.parse import urlparse
+                parsed_url = urlparse(request.url)
+                domain = parsed_url.netloc.replace('www.', '')
+                display_name = f"scraped_{domain}_{os.path.basename(tmp_path)}.md"
+                
+                # Upload to Gemini FileSearch
+                logger.info(f"Uploading scraped content to Gemini FileSearch: {display_name}")
+                uploaded_file = genai.upload_file(
+                    path=tmp_path,
+                    display_name=display_name
+                )
+                
+                # Wait for file processing
+                logger.info(f"Uploaded file: {uploaded_file.name}, waiting for processing...")
+                
+                file_info = {
+                    "name": uploaded_file.name,
+                    "display_name": uploaded_file.display_name,
+                    "mime_type": uploaded_file.mime_type,
+                    "state": uploaded_file.state.name if hasattr(uploaded_file, 'state') else None,
+                }
+                
+                return ScrapeResponse(
+                    success=True,
+                    message=f"Website scraped and uploaded successfully",
+                    file_name=uploaded_file.name,
+                    file_info=file_info,
+                    scraped_urls=scraped_urls
+                )
+            finally:
+                # Clean up temp file
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                    
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error deleting scraped website file: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
+        logger.error(f"Error scraping website: {e}")
+        raise HTTPException(status_code=500, detail=f"Scraping failed: {str(e)}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    # Railway sets PORT, fallback to 8002
+    port = int(os.getenv("PORT", "8002"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
