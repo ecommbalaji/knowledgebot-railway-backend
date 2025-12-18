@@ -71,9 +71,14 @@ app.add_middleware(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or settings.gemini_api_key
 genai_client = None
 if not GEMINI_API_KEY:
-    logger.warning("GEMINI_API_KEY environment variable not set - API endpoints will fail")
+    logger.warning("GEMINI_API_KEY environment variable not set - Gemini-dependent endpoints will be unavailable")
 else:
-    genai_client = genai.Client(api_key=GEMINI_API_KEY)
+    try:
+        genai_client = genai.Client(api_key=GEMINI_API_KEY)
+        logger.info("✅ Gemini client initialized successfully")
+    except Exception as e:
+        genai_client = None
+        logger.error(f"❌ Failed to initialize Gemini client: {e}")
 
 # Initialize R2 Storage (optional)
 r2_storage: Optional[R2Storage] = None
@@ -93,33 +98,7 @@ if r2_config_value:
 else:
     logger.info("ℹ️  R2 storage not configured (cloudflare_r2_url not set)")
 
-# Lifespan context manager for startup and shutdown events
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Handle application startup and shutdown events."""
-    try:
-        # Startup - Initialize database connections
-        if settings.railway_postgres_url:
-            try:
-                await init_railway_db(settings.railway_postgres_url)
-                logger.info("Railway PostgreSQL database initialized")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Railway PostgreSQL: {e}")
-
-        logger.info("🚀 Knowledgebase ingestion service started successfully")
-        logger.info("🏥 Health check endpoint: /health")
-        logger.info("📤 Upload endpoint: POST /upload")
-        logger.info("📄 Files endpoint: GET /files")
-
-        yield
-
-        # Shutdown - Close database connections
-        if railway_db:
-            await railway_db.disconnect()
-        logger.info("🛑 Knowledgebase ingestion service shutting down")
-    except Exception as e:
-        logger.error(f"❌ Error in lifespan handler: {e}")
-        raise
+# ...existing code above continues...
 
 
 class FileInfo(BaseModel):
@@ -214,7 +193,8 @@ async def upload_document(
         UploadResponse with file information
     """
     if not genai_client:
-        raise HTTPException(status_code=503, detail="Gemini API client not configured")
+        from shared.utils import dependency_unavailable_error
+        raise dependency_unavailable_error("gemini", "client not configured")
 
     r2_result = None
     db_record_id = None
@@ -250,7 +230,6 @@ async def upload_document(
                 file_size += len(chunk)
             tmp_path = tmp_file.name
 
-        try:
             # Step 1: Upload to Cloudflare R2 (if configured)
             r2_key = None
             r2_url = None
@@ -267,8 +246,8 @@ async def upload_document(
                             'uploaded_by': email
                         }
                     )
-                    r2_key = r2_result['key']
-                    r2_url = r2_result['url']
+                    r2_key = r2_result.get('key')
+                    r2_url = r2_result.get('url')
                     is_private = r2_result.get('is_private', False)
 
                     logger.info(f"✅ File uploaded to R2 successfully: {r2_key}")
@@ -276,6 +255,8 @@ async def upload_document(
                         logger.info(f"🔗 R2 URL: {r2_url}")
                     else:
                         logger.info("🔒 Private R2 bucket - file accessible via signed URLs or API only")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to upload file to R2: {e}")
             else:
                 logger.warning("⚠️  R2 storage not configured - skipping R2 upload")
 
@@ -392,21 +373,24 @@ async def upload_document(
                 file=file_info,
                 message=f"File uploaded successfully: {file_display_name}"
             )
-        finally:
-            # Clean up temp file
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-
     except Exception as e:
         logger.error(f"Error uploading file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+    finally:
+        # Clean up temp file
+        try:
+            if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except Exception:
+            logger.warning("Failed to clean up temp file", exc_info=True)
 
 
 @app.get("/files", response_model=FilesResponse)
 async def list_files():
     """List all uploaded files in Gemini FileSearch."""
     if not genai_client:
-        raise HTTPException(status_code=503, detail="Gemini API client not configured")
+        from shared.utils import dependency_unavailable_error
+        raise dependency_unavailable_error("gemini", "client not configured")
 
     try:
         files = genai_client.files.list()
@@ -447,7 +431,8 @@ async def list_files_metadata(
         user_email: User email for access tracking
     """
     if not railway_db:
-        raise HTTPException(status_code=503, detail="Database not configured")
+        from shared.utils import dependency_unavailable_error
+        raise dependency_unavailable_error("database", "database not configured")
 
     try:
         files = await railway_db.fetch(
@@ -540,7 +525,8 @@ async def get_file_signed_url(
         Signed URL for file access
     """
     if not r2_storage:
-        raise HTTPException(status_code=503, detail="R2 storage not configured")
+        from shared.utils import dependency_unavailable_error
+        raise dependency_unavailable_error("r2", "R2 storage not configured")
 
     # Validate expiration time (max 24 hours for security)
     if expiration > 86400:  # 24 hours
@@ -619,7 +605,8 @@ async def download_file(
 async def delete_file(file_name: str):
     """Delete a file from Gemini FileSearch, R2 storage, and database."""
     if not genai_client:
-        raise HTTPException(status_code=503, detail="Gemini API client not configured")
+        from shared.utils import dependency_unavailable_error
+        raise dependency_unavailable_error("gemini", "client not configured")
 
     try:
         # First, delete from Gemini FileSearch

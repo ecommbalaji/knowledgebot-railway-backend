@@ -179,7 +179,13 @@ openai_model = None
 
 if OPENAI_API_KEY:
     # Just pass the model name - API key is read from environment
-    openai_model = OpenAIModel(MODEL_NAME)
+    try:
+        openai_model = OpenAIModel(MODEL_NAME)
+        logger.info("✅ OpenAI model initialized")
+    except Exception as e:
+        openai_model = None
+        logger.error(f"❌ Failed to initialize OpenAIModel: {e}")
+        logger.error("OpenAI model will be unavailable; chat endpoints may return 503 or degraded responses")
 else:
     logger.warning("OpenAI model not initialized - OPENAI_API_KEY is missing")
 

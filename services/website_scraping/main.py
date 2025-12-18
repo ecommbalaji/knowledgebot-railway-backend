@@ -54,16 +54,20 @@ app.add_middleware(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 logger.info(f"GEMINI_API_KEY configured: {'YES' if GEMINI_API_KEY else 'NO'}")
 
+# Do not crash the whole process if GEMINI_API_KEY is missing or Gemini init fails.
+# Instead, initialize `genai_client` defensively and let endpoints return 503 when
+# the client is required. This prevents the container from exiting at startup
+# due to missing optional configuration.
+genai_client = None
 if not GEMINI_API_KEY:
-    logger.error("GEMINI_API_KEY environment variable is required")
-    raise ValueError("GEMINI_API_KEY environment variable is required")
-
-try:
-    genai_client = genai.Client(api_key=GEMINI_API_KEY)
-    logger.info("Gemini client initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize Gemini client: {e}")
-    raise
+    logger.warning("GEMINI_API_KEY environment variable is not set - Gemini-dependent endpoints will be unavailable")
+else:
+    try:
+        genai_client = genai.Client(api_key=GEMINI_API_KEY)
+        logger.info("Gemini client initialized successfully")
+    except Exception as e:
+        genai_client = None
+        logger.error(f"Failed to initialize Gemini client: {e}")
 
 
 class ScrapeRequest(BaseModel):
@@ -162,6 +166,12 @@ async def scrape_website(request: ScrapeRequest):
                 elif isinstance(result.links, list):
                     scraped_urls.extend(result.links[:request.max_pages or 10])
             
+            # Ensure Gemini client is available before attempting upload
+            if not genai_client:
+                logger.error("Gemini client not available - cannot upload scraped content")
+                from shared.utils import dependency_unavailable_error
+                raise dependency_unavailable_error("gemini", "client not configured")
+
             # Save to temporary file
             with tempfile.NamedTemporaryFile(
                 mode='w',
