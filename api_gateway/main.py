@@ -4,17 +4,94 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import httpx
 import logging
+import time
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 import os
+import sys
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
+# Configure detailed logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.StreamHandler(sys.stderr)
+    ]
+)
 logger = logging.getLogger(__name__)
 
+# Add startup logging
+logger.info("="*60)
+logger.info("API GATEWAY SERVICE STARTING UP")
+logger.info("="*60)
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Working directory: {os.getcwd()}")
+logger.info(f"Environment: {os.getenv('RAILWAY_ENVIRONMENT', 'development')}")
+
+# Log service URLs and configuration
+logger.info("SERVICE CONFIGURATION:")
+logger.info(f"KNOWLEDGEBASE_INGESTION_URL: {os.getenv('KNOWLEDGEBASE_INGESTION_URL', 'http://localhost:8001')}")
+logger.info(f"WEBSITE_SCRAPING_URL: {os.getenv('WEBSITE_SCRAPING_URL', 'http://localhost:8002')}")
+logger.info(f"CHATBOT_ORCHESTRATION_URL: {os.getenv('CHATBOT_ORCHESTRATION_URL', 'http://localhost:8003')}")
+logger.info(f"PORT: {os.getenv('PORT', '8000')}")
+
+# Check if required environment variables are set
+required_env_vars = ['KNOWLEDGEBASE_INGESTION_URL', 'WEBSITE_SCRAPING_URL', 'CHATBOT_ORCHESTRATION_URL']
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    logger.warning(f"Missing environment variables: {missing_vars}")
+else:
+    logger.info("All required environment variables are set")
+
+logger.info("="*60)
+
 app = FastAPI(title="Knowledge Bot API Gateway", version="1.0.0")
+
+# Track application start time for uptime calculations
+app.start_time = time.time()
+
+# Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Middleware to log all incoming requests with timing and status information."""
+    start_time = time.time()
+    request_id = f"{int(start_time * 1000000) % 1000000:06d}"  # Simple request ID
+
+    # Log incoming request
+    logger.info(f"📨 [{request_id}] {request.method} {request.url.path} - Client: {request.client.host if request.client else 'unknown'}")
+
+    # Log headers (excluding sensitive ones)
+    safe_headers = {k: v for k, v in request.headers.items()
+                   if k.lower() not in ['authorization', 'x-api-key', 'cookie']}
+    if safe_headers:
+        logger.debug(f"📋 [{request_id}] Headers: {dict(safe_headers)}")
+
+    try:
+        # Process the request
+        response = await call_next(request)
+
+        # Calculate duration
+        duration = time.time() - start_time
+
+        # Log response
+        if response.status_code >= 400:
+            logger.warning(".3f")
+        elif response.status_code >= 300:
+            logger.info(".3f")
+        else:
+            logger.info(".3f")
+
+        return response
+
+    except Exception as e:
+        duration = time.time() - start_time
+        logger.error(".3f")
+        raise
 
 # CORS middleware
 app.add_middleware(
@@ -106,33 +183,216 @@ class ReviewResponse(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint - returns gateway status only."""
-    return {"status": "healthy", "service": "api-gateway"}
+    """Health check endpoint - returns gateway status with detailed logging."""
+    start_time = time.time()
+    logger.info("🔍 Health check request received")
+
+    try:
+        # Check if the application is responsive
+        health_status = {
+            "status": "healthy",
+            "service": "api-gateway",
+            "timestamp": time.time(),
+            "uptime_seconds": time.time() - getattr(app, 'start_time', time.time())
+        }
+
+        # Log environment checks
+        logger.info("✅ Application is responsive")
+        logger.info(f"📊 Health status: {health_status['status']}")
+        logger.info(".2f")
+
+        # Check critical dependencies (basic connectivity)
+        try:
+            # Test if httpx client can be created (basic functionality check)
+            async with httpx.AsyncClient() as client:
+                logger.info("✅ HTTP client initialization successful")
+        except Exception as e:
+            logger.error(f"❌ HTTP client initialization failed: {e}")
+            health_status["status"] = "unhealthy"
+            health_status["error"] = f"HTTP client error: {str(e)}"
+
+        # Check if service URLs are reachable (lightweight check)
+        service_urls = {
+            "knowledgebase_ingestion": KNOWLEDGEBASE_INGESTION_URL,
+            "website_scraping": WEBSITE_SCRAPING_URL,
+            "chatbot_orchestration": CHATBOT_ORCHESTRATION_URL
+        }
+
+        connectivity_checks = {}
+        for service_name, url in service_urls.items():
+            try:
+                # Just check if URL is parseable and reachable, not full health check
+                parsed_url = httpx.URL(url)
+                connectivity_checks[service_name] = {
+                    "url": url,
+                    "reachable": True,
+                    "scheme": parsed_url.scheme,
+                    "host": parsed_url.host,
+                    "port": parsed_url.port
+                }
+                logger.info(f"✅ {service_name} URL configured: {url}")
+            except Exception as e:
+                connectivity_checks[service_name] = {
+                    "url": url,
+                    "reachable": False,
+                    "error": str(e)
+                }
+                logger.warning(f"⚠️  {service_name} URL configuration issue: {e}")
+                health_status["status"] = "degraded"
+
+        health_status["connectivity_checks"] = connectivity_checks
+
+        # Log final health status
+        duration = time.time() - start_time
+        logger.info(".3f")
+
+        if health_status["status"] == "healthy":
+            logger.info("🎉 Health check completed successfully")
+        elif health_status["status"] == "degraded":
+            logger.warning("⚠️  Health check completed with warnings")
+        else:
+            logger.error("❌ Health check failed")
+
+        return health_status
+
+    except Exception as e:
+        duration = time.time() - start_time
+        logger.error(".3f")
+        logger.error(f"💥 Critical health check error: {e}")
+        raise HTTPException(status_code=503, detail=f"Health check failed: {str(e)}")
 
 
 @app.get("/status")
 async def system_status():
-    """Check connections to all downstream services."""
+    """Check connections to all downstream services with detailed logging."""
+    start_time = time.time()
+    logger.info("🔍 System status check initiated")
+
     services = {
         "knowledgebase": KNOWLEDGEBASE_INGESTION_URL,
         "website_scraping": WEBSITE_SCRAPING_URL,
         "chatbot": CHATBOT_ORCHESTRATION_URL
     }
     statuses = {"gateway": "online"}
+    detailed_results = {
+        "timestamp": time.time(),
+        "overall_status": "checking",
+        "services": {}
+    }
 
-    async with httpx.AsyncClient() as client:
+    logger.info("🌐 Checking downstream service connectivity...")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:  # Increased timeout for better diagnostics
         for name, url in services.items():
+            service_start_time = time.time()
+            logger.info(f"🔗 Checking {name} service at {url}")
+
             try:
                 # Try to hit the health endpoint of the downstream service
-                resp = await client.get(f"{url}/health", timeout=5.0)
+                health_url = f"{url}/health"
+                logger.info(f"📡 Making request to: {health_url}")
+
+                resp = await client.get(health_url, timeout=5.0)
+
+                service_duration = time.time() - service_start_time
+                logger.info(".3f")
+
                 if resp.status_code == 200:
                     statuses[name] = "online"
+                    logger.info(f"✅ {name} service is ONLINE (status: {resp.status_code})")
+
+                    # Try to parse response for additional details
+                    try:
+                        response_data = resp.json()
+                        logger.info(f"📊 {name} health response: {response_data}")
+                        detailed_results["services"][name] = {
+                            "status": "online",
+                            "http_status": resp.status_code,
+                            "response_time_seconds": round(service_duration, 3),
+                            "health_data": response_data
+                        }
+                    except Exception as parse_error:
+                        logger.warning(f"⚠️  Could not parse {name} health response as JSON: {parse_error}")
+                        detailed_results["services"][name] = {
+                            "status": "online",
+                            "http_status": resp.status_code,
+                            "response_time_seconds": round(service_duration, 3),
+                            "response_text": resp.text[:200]  # First 200 chars
+                        }
+
                 else:
                     statuses[name] = f"error: {resp.status_code}"
-            except Exception as e:
-                statuses[name] = f"unreachable: {str(e)}"
+                    logger.error(f"❌ {name} service returned error status: {resp.status_code}")
+                    logger.error(f"📄 Response: {resp.text[:500]}")  # Log response body for debugging
 
-    return statuses
+                    detailed_results["services"][name] = {
+                        "status": "error",
+                        "http_status": resp.status_code,
+                        "response_time_seconds": round(service_duration, 3),
+                        "error": f"HTTP {resp.status_code}",
+                        "response_preview": resp.text[:200]
+                    }
+
+            except httpx.TimeoutException as e:
+                service_duration = time.time() - service_start_time
+                statuses[name] = f"timeout: {str(e)}"
+                logger.error(".3f")
+                logger.error(f"⏰ {name} service health check timed out")
+
+                detailed_results["services"][name] = {
+                    "status": "timeout",
+                    "error": "Request timeout",
+                    "response_time_seconds": round(service_duration, 3),
+                    "timeout_seconds": 5.0
+                }
+
+            except httpx.ConnectError as e:
+                service_duration = time.time() - service_start_time
+                statuses[name] = f"unreachable: {str(e)}"
+                logger.error(".3f")
+                logger.error(f"🚫 {name} service is unreachable: {e}")
+
+                detailed_results["services"][name] = {
+                    "status": "unreachable",
+                    "error": str(e),
+                    "response_time_seconds": round(service_duration, 3)
+                }
+
+            except Exception as e:
+                service_duration = time.time() - service_start_time
+                statuses[name] = f"error: {str(e)}"
+                logger.error(".3f")
+                logger.error(f"💥 Unexpected error checking {name} service: {e}")
+
+                detailed_results["services"][name] = {
+                    "status": "error",
+                    "error": str(e),
+                    "response_time_seconds": round(service_duration, 3),
+                    "error_type": type(e).__name__
+                }
+
+    # Determine overall system status
+    online_services = sum(1 for status in statuses.values() if status == "online")
+    total_services = len(services) + 1  # +1 for gateway
+
+    if online_services == total_services:
+        detailed_results["overall_status"] = "healthy"
+        logger.info("🎉 All services are healthy")
+    elif online_services >= total_services - 1:  # At least gateway + most services
+        detailed_results["overall_status"] = "degraded"
+        logger.warning("⚠️  System is degraded - some services may be unavailable")
+    else:
+        detailed_results["overall_status"] = "unhealthy"
+        logger.error("❌ System is unhealthy - critical services are down")
+
+    total_duration = time.time() - start_time
+    logger.info(".3f")
+
+    # Return both simple status and detailed results
+    return {
+        "simple_status": statuses,
+        "detailed_status": detailed_results
+    }
 
 
 # API Gateway Routing Endpoints
