@@ -25,9 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Debug logging to check if script starts
 logger.info("🔍 API Gateway script starting...")
-
-try:
-    logger.info("🔍 Testing basic imports and setup...")
+logger.info("🔍 Testing basic imports and setup...")
 
 # Add startup logging
 logger.info("="*60)
