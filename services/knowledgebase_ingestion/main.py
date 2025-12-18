@@ -25,6 +25,34 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Lifespan context manager for startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown events."""
+    try:
+        # Startup - Initialize database connections
+        if settings.railway_postgres_url:
+            try:
+                await init_railway_db(settings.railway_postgres_url)
+                logger.info("Railway PostgreSQL database initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Railway PostgreSQL: {e}")
+
+        logger.info("🚀 Knowledgebase ingestion service started successfully")
+        logger.info("🏥 Health check endpoint: /health")
+        logger.info("📤 Upload endpoint: POST /upload")
+        logger.info("📄 Files endpoint: GET /files")
+
+        yield
+
+        # Shutdown - Close database connections
+        if railway_db:
+            await railway_db.disconnect()
+        logger.info("🛑 Knowledgebase ingestion service shutdown complete")
+    except Exception as e:
+        logger.error(f"❌ Error in lifespan handler: {e}")
+        raise
+
 app = FastAPI(
     title="Knowledgebase Ingestion Service",
     version="1.0.0",
