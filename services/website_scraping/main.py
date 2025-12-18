@@ -11,13 +11,36 @@ import asyncio
 from crawl4ai import AsyncWebCrawler
 from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
 import tempfile
+from contextlib import asynccontextmanager
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Website Scraping Service", version="1.0.0")
+# Lifespan context manager for startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown events."""
+    try:
+        # Startup
+        logger.info("🚀 Website scraping service started successfully")
+        logger.info("🏥 Health check endpoint: /health")
+        logger.info("🔗 Scrape endpoint: POST /scrape")
+
+        yield
+
+        # Shutdown
+        logger.info("🛑 Website scraping service shutting down")
+    except Exception as e:
+        logger.error(f"❌ Error in lifespan handler: {e}")
+        raise
+
+app = FastAPI(
+    title="Website Scraping Service",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,18 +64,6 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize Gemini client: {e}")
     raise
-
-@app.on_event("startup")
-async def startup_event():
-    """Log when the service starts successfully."""
-    logger.info("🚀 Website scraping service started successfully")
-    logger.info("🏥 Health check endpoint: /health")
-    logger.info("🔗 Scrape endpoint: POST /scrape")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Log when the service shuts down."""
-    logger.info("🛑 Website scraping service shutting down")
 
 
 class ScrapeRequest(BaseModel):

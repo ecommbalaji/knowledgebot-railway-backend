@@ -22,9 +22,9 @@ WORKDIR /app/services/website_scraping
 # Expose port
 EXPOSE 8002
 
-# Add health check
+# Add health check using PORT environment variable
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8002/health || exit 1
+    CMD sh -c 'curl -f http://localhost:${PORT:-8002}/health || exit 1'
 
-# Run the application with uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
+# Run the application with uvicorn - use PORT env var from Railway
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8002}

@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import sys
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 # Add shared directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -24,7 +25,11 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Knowledgebase Ingestion Service", version="1.0.0")
+app = FastAPI(
+    title="Knowledgebase Ingestion Service",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,22 +65,33 @@ if r2_config_value:
 else:
     logger.info("ℹ️  R2 storage not configured (cloudflare_r2_url not set)")
 
-# Initialize PostgreSQL database (optional)
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database connections on startup."""
-    if settings.railway_postgres_url:
-        try:
-            await init_railway_db(settings.railway_postgres_url)
-            logger.info("Railway PostgreSQL database initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Railway PostgreSQL: {e}")
+# Lifespan context manager for startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown events."""
+    try:
+        # Startup - Initialize database connections
+        if settings.railway_postgres_url:
+            try:
+                await init_railway_db(settings.railway_postgres_url)
+                logger.info("Railway PostgreSQL database initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Railway PostgreSQL: {e}")
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Close database connections on shutdown."""
-    if railway_db:
-        await railway_db.disconnect()
+        logger.info("🚀 Knowledgebase ingestion service started successfully")
+        logger.info("🏥 Health check endpoint: /health")
+        logger.info("📤 Upload endpoint: POST /upload")
+        logger.info("📄 Files endpoint: GET /files")
+
+        yield
+
+        # Shutdown - Close database connections
+        if railway_db:
+            await railway_db.disconnect()
+        logger.info("🛑 Knowledgebase ingestion service shutting down")
+    except Exception as e:
+        logger.error(f"❌ Error in lifespan handler: {e}")
+        raise
 
 
 class FileInfo(BaseModel):

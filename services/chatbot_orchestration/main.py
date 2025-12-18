@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import uuid
 from datetime import datetime
 from google import genai
+from contextlib import asynccontextmanager
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
 from pydantic_ai.models.openai import OpenAIModel
@@ -28,7 +29,11 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Chatbot Orchestration Service", version="1.0.0")
+app = FastAPI(
+    title="Chatbot Orchestration Service",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,21 +44,29 @@ app.add_middleware(
 )
 
 # Initialize Gemini
+logger.info("🔄 Initializing AI components...")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or settings.gemini_api_key
 genai_client = None
 if not GEMINI_API_KEY:
-    logger.warning("GEMINI_API_KEY environment variable not set - some features will fail")
+    logger.warning("⚠️  GEMINI_API_KEY not set - some features will fail")
 else:
-    genai_client = genai.Client(api_key=GEMINI_API_KEY)
+    try:
+        genai_client = genai.Client(api_key=GEMINI_API_KEY)
+        logger.info("✅ Gemini client initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Gemini client: {e}")
 
 # Initialize OpenAI model for Pydantic AI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or settings.openai_api_key
 if not OPENAI_API_KEY:
-    logger.warning("OPENAI_API_KEY environment variable not set - chat endpoints will fail")
+    logger.warning("⚠️  OPENAI_API_KEY not set - chat endpoints will fail")
+else:
+    logger.info("✅ OpenAI API key configured")
 
 MODEL_NAME = os.getenv("CHATBOT_MODEL", settings.chatbot_model)
 TEMPERATURE = float(os.getenv("CHATBOT_TEMPERATURE", str(settings.chatbot_temperature)))
 MAX_TOKENS = int(os.getenv("CHATBOT_MAX_TOKENS", str(settings.chatbot_max_tokens)))
+logger.info(f"🤖 Model config: {MODEL_NAME}, temp={TEMPERATURE}, max_tokens={MAX_TOKENS}")
 
 # Initialize Tavily for internet search (optional)
 tavily_client = None
@@ -61,40 +74,62 @@ if settings.tavily_api_key and settings.enable_internet_search:
     try:
         from tavily import TavilyClient
         tavily_client = TavilyClient(api_key=settings.tavily_api_key)
-        logger.info("Tavily internet search initialized")
+        logger.info("✅ Tavily internet search initialized")
     except Exception as e:
-        logger.warning(f"Failed to initialize Tavily: {e}")
+        logger.warning(f"⚠️  Failed to initialize Tavily: {e}")
+else:
+    logger.info("ℹ️  Tavily not configured or disabled")
 
 # In-memory session storage
 sessions: Dict[str, Dict[str, Any]] = {}
 
-# Initialize databases on startup
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database connections on startup."""
-    # Initialize Railway PostgreSQL
-    if settings.railway_postgres_url:
-        try:
-            await init_railway_db(settings.railway_postgres_url)
-            logger.info("Railway PostgreSQL database initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Railway PostgreSQL: {e}")
-    
-    # Initialize Neon DB
-    if settings.neon_db_url:
-        try:
-            await init_neon_db(settings.neon_db_url)
-            logger.info("Neon DB database initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Neon DB: {e}")
+# Lifespan context manager for startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown events."""
+    logger.info("🔄 Chatbot orchestration lifespan starting...")
+    try:
+        # Startup - Initialize database connections with timeout
+        logger.info("🗄️  Initializing databases...")
+        import asyncio
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Close database connections on shutdown."""
-    if railway_db:
-        await railway_db.disconnect()
-    if neon_db:
-        await neon_db.disconnect()
+        # Initialize databases with individual timeouts
+        db_tasks = []
+        if settings.railway_postgres_url:
+            db_tasks.append(("Railway PostgreSQL", init_railway_db(settings.railway_postgres_url)))
+        if settings.neon_db_url:
+            db_tasks.append(("Neon DB", init_neon_db(settings.neon_db_url)))
+
+        for db_name, init_task in db_tasks:
+            try:
+                # Timeout each DB init to 10 seconds
+                await asyncio.wait_for(init_task, timeout=10.0)
+                logger.info(f"✅ {db_name} database initialized")
+            except asyncio.TimeoutError:
+                logger.warning(f"⏰ {db_name} initialization timed out after 10 seconds")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize {db_name}: {e}")
+
+        logger.info("🚀 Chatbot orchestration service started successfully")
+        logger.info("🏥 Health check endpoint: /health")
+        logger.info("💬 Chat endpoint: POST /chat")
+        logger.info("📊 Sessions endpoint: GET /sessions")
+
+        yield
+
+        # Shutdown - Close database connections
+        logger.info("🛑 Shutting down chatbot orchestration service...")
+        if railway_db:
+            await railway_db.disconnect()
+        if neon_db:
+            await neon_db.disconnect()
+        logger.info("✅ Chatbot orchestration service shutdown complete")
+    except Exception as e:
+        logger.error(f"❌ Critical error in lifespan handler: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
 
 
 # Pydantic models for structured outputs
