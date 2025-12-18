@@ -1,38 +1,38 @@
 # Core dependencies
-fastapi==0.124.4
-uvicorn[standard]==0.38.0
-pydantic==2.12.5
-httpx==0.28.1
-python-dotenv==1.2.1
+fastapi>=0.124.0
+uvicorn[standard]>=0.38.0
+pydantic>=2.12.0
+httpx>=0.28.0
+python-dotenv>=1.2.0
 
 # Pydantic AI (for Chatbot Orchestration)
-pydantic-ai==1.32.0
+pydantic-ai>=1.32.0
 
 # OpenAI (for LLM in Chatbot Orchestration)
-openai==2.11.0
+openai>=2.11.0
 
 # Google Gemini (for FileSearch)
-google-generativeai==0.8.5
-google-auth==2.38.0
+google-generativeai>=0.8.0
+google-auth>=2.38.0
 
 # Web Scraping
-crawl4ai==0.7.8
-beautifulsoup4==4.12.3
-lxml==5.3.0
-playwright==1.56.0
+crawl4ai>=0.7.0
+beautifulsoup4>=4.12.0
+lxml>=5.3.0
+playwright>=1.56.0
 
 # Utilities
-pydantic-settings==2.5.2
-aiofiles==24.1.0
-python-multipart==0.0.9
+pydantic-settings>=2.5.0
+aiofiles>=24.1.0
+python-multipart>=0.0.9
 
 # Cloudflare R2 (S3-compatible)
 # Use version compatible with pydantic-ai-slim bedrock extra (requires boto3>=1.40.14)
 boto3>=1.40.14
 
 # PostgreSQL
-asyncpg==0.29.0
-psycopg2-binary==2.9.9
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.0
 
 # Internet search (optional - for web search capability)
-tavily-python==0.3.0
+tavily-python>=0.3.0
