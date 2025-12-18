@@ -29,6 +29,54 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Lifespan context manager for startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown events."""
+    logger.info("🔄 Chatbot orchestration lifespan starting...")
+    try:
+        # Startup - Initialize database connections with timeout
+        logger.info("🗄️  Initializing databases...")
+        import asyncio
+
+        # Initialize databases with individual timeouts
+        db_tasks = []
+        if settings.railway_postgres_url:
+            db_tasks.append(("Railway PostgreSQL", init_railway_db(settings.railway_postgres_url)))
+        if settings.neon_db_url:
+            db_tasks.append(("Neon DB", init_neon_db(settings.neon_db_url)))
+
+        for db_name, init_task in db_tasks:
+            try:
+                # Timeout each DB init to 10 seconds
+                await asyncio.wait_for(init_task, timeout=10.0)
+                logger.info(f"✅ {db_name} database initialized")
+            except asyncio.TimeoutError:
+                logger.warning(f"⏰ {db_name} initialization timed out after 10 seconds")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize {db_name}: {e}")
+
+        logger.info("🚀 Chatbot orchestration service started successfully")
+        logger.info("🏥 Health check endpoint: /health")
+        logger.info("💬 Chat endpoint: POST /chat")
+        logger.info("📊 Sessions endpoint: GET /sessions")
+
+        yield
+
+        # Shutdown - Close database connections
+        logger.info("🛑 Shutting down chatbot orchestration service...")
+        if railway_db:
+            await railway_db.disconnect()
+        if neon_db:
+            await neon_db.disconnect()
+        logger.info("✅ Chatbot orchestration service shutdown complete")
+    except Exception as e:
+        logger.error(f"❌ Critical error in lifespan handler: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
+
 app = FastAPI(
     title="Chatbot Orchestration Service",
     version="1.0.0",
@@ -82,54 +130,6 @@ else:
 
 # In-memory session storage
 sessions: Dict[str, Dict[str, Any]] = {}
-
-# Lifespan context manager for startup and shutdown events
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Handle application startup and shutdown events."""
-    logger.info("🔄 Chatbot orchestration lifespan starting...")
-    try:
-        # Startup - Initialize database connections with timeout
-        logger.info("🗄️  Initializing databases...")
-        import asyncio
-
-        # Initialize databases with individual timeouts
-        db_tasks = []
-        if settings.railway_postgres_url:
-            db_tasks.append(("Railway PostgreSQL", init_railway_db(settings.railway_postgres_url)))
-        if settings.neon_db_url:
-            db_tasks.append(("Neon DB", init_neon_db(settings.neon_db_url)))
-
-        for db_name, init_task in db_tasks:
-            try:
-                # Timeout each DB init to 10 seconds
-                await asyncio.wait_for(init_task, timeout=10.0)
-                logger.info(f"✅ {db_name} database initialized")
-            except asyncio.TimeoutError:
-                logger.warning(f"⏰ {db_name} initialization timed out after 10 seconds")
-            except Exception as e:
-                logger.error(f"❌ Failed to initialize {db_name}: {e}")
-
-        logger.info("🚀 Chatbot orchestration service started successfully")
-        logger.info("🏥 Health check endpoint: /health")
-        logger.info("💬 Chat endpoint: POST /chat")
-        logger.info("📊 Sessions endpoint: GET /sessions")
-
-        yield
-
-        # Shutdown - Close database connections
-        logger.info("🛑 Shutting down chatbot orchestration service...")
-        if railway_db:
-            await railway_db.disconnect()
-        if neon_db:
-            await neon_db.disconnect()
-        logger.info("✅ Chatbot orchestration service shutdown complete")
-    except Exception as e:
-        logger.error(f"❌ Critical error in lifespan handler: {e}")
-        logger.error(f"Error type: {type(e).__name__}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise
 
 
 # Pydantic models for structured outputs
