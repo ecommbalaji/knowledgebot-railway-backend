@@ -8,6 +8,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - PORT=8000
       - KNOWLEDGEBASE_INGESTION_URL=http://knowledgebase-ingestion:8001
       - WEBSITE_SCRAPING_URL=http://website-scraping:8002
       - CHATBOT_ORCHESTRATION_URL=http://chatbot-orchestration:8003
@@ -28,6 +29,8 @@ services:
       - "8001:8001"
     env_file:
       - .env
+    environment:
+      - PORT=8001
 
   website-scraping:
     build:
@@ -37,6 +40,8 @@ services:
       - "8002:8002"
     env_file:
       - .env
+    environment:
+      - PORT=8002
 
   chatbot-orchestration:
     build:
@@ -46,3 +51,5 @@ services:
       - "8003:8003"
     env_file:
       - .env
+    environment:
+      - PORT=8003
