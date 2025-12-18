@@ -56,3 +56,4 @@ htmlcov/
 # Railway
 .railway/
 .env
+.env
