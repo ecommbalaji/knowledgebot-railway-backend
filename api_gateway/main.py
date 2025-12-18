@@ -54,6 +54,18 @@ else:
 
 logger.info(f"🚀 Application will start on port {PORT}")
 
+# Make shared package importable when code runs inside container
+from pathlib import Path
+try:
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+except Exception:
+    logger.debug("Could not adjust sys.path for shared imports")
+
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers
+
+# Install global exception and signal handlers early so any startup issues get logged
+setup_global_exception_logging("api_gateway")
+
 # Lifespan context manager for startup and shutdown events
 @asynccontextmanager
 async def lifespan(app: FastAPI):

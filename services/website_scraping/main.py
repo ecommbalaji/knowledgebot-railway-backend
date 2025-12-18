@@ -18,6 +18,17 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Ensure shared utilities are importable and enable global exception logging
+import sys
+from pathlib import Path
+try:
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+except Exception:
+    logger.debug("Could not adjust sys.path for shared imports")
+
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers
+setup_global_exception_logging("website_scraping")
+
 # Lifespan context manager for startup and shutdown events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,6 +52,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Register FastAPI-level exception handlers to ensure stack traces are logged
+register_fastapi_exception_handlers(app, "website_scraping")
 
 app.add_middleware(
     CORSMiddleware,
