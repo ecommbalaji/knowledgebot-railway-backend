@@ -125,20 +125,27 @@ class R2Storage:
                 )
             )
             
-            # Generate public URL
+            # Generate URL for private bucket access
             if self.public_url:
+                # Public bucket - use public URL
                 file_url = f"{self.public_url}/{file_key}"
             else:
-                # Fallback to endpoint URL
-                file_url = f"{self.s3_client.meta.endpoint_url}/{self.bucket_name}/{file_key}"
-            
+                # Private bucket - no public URL available
+                # Return None for URL to indicate private access only
+                file_url = None
+
             logger.info(f"File uploaded to R2: {file_key}")
-            
+            if file_url:
+                logger.info(f"Public URL available: {file_url}")
+            else:
+                logger.info("Private bucket - file accessible via signed URLs or API only")
+
             return {
                 'key': file_key,
-                'url': file_url,
+                'url': file_url,  # None for private buckets
                 'size': len(file_content),
-                'bucket': self.bucket_name
+                'bucket': self.bucket_name,
+                'is_private': file_url is None
             }
             
         except ClientError as e:
@@ -165,9 +172,36 @@ class R2Storage:
             logger.error(f"Failed to delete file from R2: {e}")
             return False
     
-    def get_file_url(self, file_key: str) -> str:
-        """Get public URL for a file key."""
+    def get_file_url(self, file_key: str) -> Optional[str]:
+        """Get public URL for a file key (None for private buckets)."""
         if self.public_url:
             return f"{self.public_url}/{file_key}"
-        return f"{self.s3_client.meta.endpoint_url}/{self.bucket_name}/{file_key}"
+        # Private bucket - no public URL available
+        return None
+
+    def generate_signed_url(self, file_key: str, expiration: int = 3600) -> str:
+        """
+        Generate a signed URL for private bucket access.
+
+        Args:
+            file_key: The R2 object key
+            expiration: URL expiration time in seconds (default 1 hour)
+
+        Returns:
+            Signed URL string
+        """
+        try:
+            import datetime
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': self.bucket_name,
+                    'Key': file_key
+                },
+                ExpiresIn=expiration
+            )
+            return url
+        except Exception as e:
+            logger.error(f"Failed to generate signed URL for {file_key}: {e}")
+            raise
 

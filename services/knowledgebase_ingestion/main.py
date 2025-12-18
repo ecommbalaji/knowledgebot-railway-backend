@@ -44,12 +44,21 @@ else:
 
 # Initialize R2 Storage (optional)
 r2_storage: Optional[R2Storage] = None
-if settings.cloudflare_r2_url:
+r2_config_value = settings.cloudflare_r2_url
+logger.info(f"R2 config from settings: {'SET' if r2_config_value else 'NOT SET'}")
+
+if r2_config_value:
+    logger.info(f"R2 connection string: {r2_config_value[:50]}...")  # Log first 50 chars for debugging
     try:
-        r2_storage = R2Storage(settings.cloudflare_r2_url)
-        logger.info("R2 storage initialized successfully")
+        r2_storage = R2Storage(r2_config_value)
+        logger.info("✅ R2 storage initialized successfully")
+        logger.info(f"R2 bucket: {r2_storage.bucket_name}")
+        logger.info(f"R2 public URL: {r2_storage.public_url or 'Not configured'}")
     except Exception as e:
-        logger.warning(f"Failed to initialize R2 storage: {e}")
+        logger.error(f"❌ Failed to initialize R2 storage: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+else:
+    logger.info("ℹ️  R2 storage not configured (cloudflare_r2_url not set)")
 
 # Initialize PostgreSQL database (optional)
 @app.on_event("startup")
@@ -216,11 +225,13 @@ async def upload_document(
                     )
                     r2_key = r2_result['key']
                     r2_url = r2_result['url']
+                    is_private = r2_result.get('is_private', False)
+
                     logger.info(f"✅ File uploaded to R2 successfully: {r2_key}")
-                    logger.info(f"🔗 R2 URL: {r2_url}")
-                except Exception as e:
-                    logger.error(f"❌ R2 upload failed: {e}")
-                    logger.warning("⚠️  Continuing with Gemini upload despite R2 failure")
+                    if r2_url:
+                        logger.info(f"🔗 R2 URL: {r2_url}")
+                    else:
+                        logger.info("🔒 Private R2 bucket - file accessible via signed URLs or API only")
             else:
                 logger.warning("⚠️  R2 storage not configured - skipping R2 upload")
 
@@ -377,19 +388,187 @@ async def list_files():
         logger.error(f"Error listing files: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
 
+@app.get("/files/metadata")
+async def list_files_metadata(
+    include_signed_urls: bool = False,
+    signed_url_expiration: int = 3600,
+    user_email: Optional[str] = Header(None, alias="X-User-Email")
+):
+    """
+    List all uploaded files with metadata from database.
+
+    Args:
+        include_signed_urls: Whether to include signed URLs for private R2 files
+        signed_url_expiration: Expiration time for signed URLs in seconds (default 1 hour)
+        user_email: User email for access tracking
+    """
+    if not railway_db:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    try:
+        files = await railway_db.fetch(
+            """
+            SELECT id, original_filename, display_name, file_extension, mime_type,
+                   size_bytes, created_at, cloudflare_r2_url, cloudflare_r2_key, gemini_file_name
+            FROM file_uploads
+            ORDER BY created_at DESC
+            """
+        )
+
+        file_list = []
+        for f in files:
+            file_info = {
+                "id": str(f["id"]),
+                "original_filename": f["original_filename"],
+                "display_name": f["display_name"],
+                "file_extension": f["file_extension"],
+                "mime_type": f["mime_type"],
+                "size_bytes": f["size_bytes"],
+                "created_at": f["created_at"].isoformat() if f["created_at"] else None,
+                "cloudflare_r2_url": f["cloudflare_r2_url"],
+                "cloudflare_r2_key": f["cloudflare_r2_key"],
+                "gemini_file_name": f["gemini_file_name"],
+                "r2_access_type": "public" if f["cloudflare_r2_url"] else "private"
+            }
+
+            # Add signed URL for private R2 files if requested
+            if include_signed_urls and f["cloudflare_r2_key"] and not f["cloudflare_r2_url"]:
+                try:
+                    signed_url = r2_storage.generate_signed_url(
+                        f["cloudflare_r2_key"],
+                        expiration=signed_url_expiration
+                    )
+                    file_info["signed_url"] = signed_url
+                    file_info["signed_url_expires_in"] = signed_url_expiration
+                except Exception as e:
+                    logger.warning(f"Failed to generate signed URL for file {f['id']}: {e}")
+                    file_info["signed_url_error"] = str(e)
+
+            file_list.append(file_info)
+
+        return {
+            "files": file_list,
+            "total_count": len(file_list),
+            "signed_urls_included": include_signed_urls,
+            "signed_url_expiration": signed_url_expiration if include_signed_urls else None
+        }
+    except Exception as e:
+        logger.error(f"Error listing files metadata: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+
 @app.get("/status")
 async def get_service_status():
     """Get service status and configuration information."""
+    r2_info = None
+    if r2_storage:
+        r2_info = {
+            "bucket": r2_storage.bucket_name,
+            "public_url": r2_storage.public_url,
+            "is_private": r2_storage.public_url is None,
+            "endpoint_url": r2_storage.s3_client.meta.endpoint_url
+        }
+
     return {
         "service": "knowledgebase_ingestion",
         "status": "healthy",
         "r2_configured": r2_storage is not None,
-        "r2_bucket": r2_storage.bucket_name if r2_storage else None,
-        "r2_public_url": r2_storage.public_url if r2_storage else None,
+        "r2_info": r2_info,
         "gemini_configured": genai_client is not None,
         "database_configured": railway_db is not None,
         "version": "1.0.0"
     }
+
+@app.get("/files/{file_id}/signed-url")
+async def get_file_signed_url(
+    file_id: str,
+    expiration: int = 3600,  # Default 1 hour
+    user_email: Optional[str] = Header(None, alias="X-User-Email")
+):
+    """
+    Generate a signed URL for accessing a private R2 file.
+
+    Args:
+        file_id: The file ID (UUID) or R2 key
+        expiration: URL expiration time in seconds (default 1 hour, max 24 hours)
+        user_email: User email for access tracking
+
+    Returns:
+        Signed URL for file access
+    """
+    if not r2_storage:
+        raise HTTPException(status_code=503, detail="R2 storage not configured")
+
+    # Validate expiration time (max 24 hours for security)
+    if expiration > 86400:  # 24 hours
+        raise HTTPException(status_code=400, detail="Expiration time cannot exceed 24 hours")
+
+    if expiration < 60:  # 1 minute minimum
+        raise HTTPException(status_code=400, detail="Expiration time must be at least 60 seconds")
+
+    try:
+        # First try to find by file ID (UUID from database)
+        r2_key = None
+        if railway_db:
+            # Try to find the file by ID
+            file_record = await railway_db.fetchrow(
+                "SELECT cloudflare_r2_key, original_filename FROM file_uploads WHERE id = $1",
+                file_id
+            )
+            if file_record and file_record['cloudflare_r2_key']:
+                r2_key = file_record['cloudflare_r2_key']
+                logger.info(f"Found R2 key for file ID {file_id}: {r2_key}")
+            else:
+                # If not found by ID, assume the file_id is actually the R2 key
+                r2_key = file_id
+                logger.info(f"Using provided file_id as R2 key: {r2_key}")
+        else:
+            # No database, assume file_id is the R2 key
+            r2_key = file_id
+
+        # Generate signed URL
+        signed_url = r2_storage.generate_signed_url(r2_key, expiration=expiration)
+
+        logger.info(f"Generated signed URL for file {r2_key}, expires in {expiration} seconds")
+
+        return {
+            "signed_url": signed_url,
+            "expires_in_seconds": expiration,
+            "file_key": r2_key,
+            "is_private": True
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to generate signed URL for file {file_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate signed URL: {str(e)}")
+
+@app.get("/files/{file_id}/download")
+async def download_file(
+    file_id: str,
+    expiration: int = 3600,
+    user_email: Optional[str] = Header(None, alias="X-User-Email")
+):
+    """
+    Download a file from private R2 storage using a signed URL redirect.
+
+    This endpoint redirects to a signed URL for immediate download.
+    """
+    try:
+        # Get signed URL
+        result = await get_file_signed_url(file_id, expiration, user_email)
+
+        # Redirect to signed URL for download
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(
+            url=result["signed_url"],
+            status_code=302,
+            headers={"Cache-Control": "private, no-cache"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to download file {file_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to download file: {str(e)}")
 
 
 @app.delete("/files/{file_name}")
