@@ -18,10 +18,7 @@ load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.StreamHandler(sys.stderr)
-    ]
+    stream=sys.stdout  # Use stdout only to avoid duplication
 )
 logger = logging.getLogger(__name__)
 
@@ -38,7 +35,9 @@ logger.info("SERVICE CONFIGURATION:")
 logger.info(f"KNOWLEDGEBASE_INGESTION_URL: {os.getenv('KNOWLEDGEBASE_INGESTION_URL', 'http://localhost:8001')}")
 logger.info(f"WEBSITE_SCRAPING_URL: {os.getenv('WEBSITE_SCRAPING_URL', 'http://localhost:8002')}")
 logger.info(f"CHATBOT_ORCHESTRATION_URL: {os.getenv('CHATBOT_ORCHESTRATION_URL', 'http://localhost:8003')}")
-logger.info(f"PORT: {os.getenv('PORT', '8000')}")
+# Get port configuration
+PORT = int(os.getenv('PORT', '8000'))
+logger.info(f"PORT: {PORT}")
 
 # Check if required environment variables are set
 required_env_vars = ['KNOWLEDGEBASE_INGESTION_URL', 'WEBSITE_SCRAPING_URL', 'CHATBOT_ORCHESTRATION_URL']
@@ -48,12 +47,34 @@ if missing_vars:
 else:
     logger.info("All required environment variables are set")
 
+logger.info(f"🚀 Application will start on port {PORT}")
+
 logger.info("="*60)
 
 app = FastAPI(title="Knowledge Bot API Gateway", version="1.0.0")
 
 # Track application start time for uptime calculations
 app.start_time = time.time()
+
+@app.on_event("startup")
+async def startup_event():
+    """Log when FastAPI application starts successfully."""
+    startup_time = time.time() - app.start_time
+    logger.info(".2f")
+    logger.info(f"🚀 FastAPI application started successfully on port {PORT}")
+    logger.info("📋 Registered routes:")
+    for route in app.routes:
+        if hasattr(route, 'path') and hasattr(route, 'methods'):
+            methods = ', '.join(route.methods)
+            logger.info(f"  {methods} {route.path}")
+    logger.info("🏥 Health check endpoint: /health")
+    logger.info("📊 Status endpoint: /status")
+    logger.info("🎉 API Gateway is ready to accept requests!")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Log when FastAPI application shuts down."""
+    logger.info("🛑 FastAPI application shutting down")
 
 # Request logging middleware
 @app.middleware("http")

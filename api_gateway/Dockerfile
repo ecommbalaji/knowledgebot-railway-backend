@@ -52,15 +52,15 @@ WORKDIR /app/api_gateway
 RUN mkdir -p /app/logs && \
     echo "📝 Logs directory created"
 
-# Expose port
-EXPOSE 8000
+# Expose port (Railway will set PORT environment variable)
+EXPOSE 8080
 
-# Add health check
+# Add health check using PORT environment variable
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD sh -c 'curl -f http://localhost:${PORT:-8080}/health || exit 1'
 
-# Log startup and run the application
-CMD echo "🎯 Starting API Gateway service..." && \
-    echo "🌐 Listening on port 8000" && \
-    echo "🏥 Health check endpoint: http://localhost:8000/health" && \
-    uvicorn main:app --host 0.0.0.0 --port 8000 --log-level info
+# Log startup and run the application with dynamic port
+CMD sh -c 'echo "🎯 Starting API Gateway service..." && \
+    echo "🌐 Listening on port ${PORT:-8080}" && \
+    echo "🏥 Health check endpoint: http://localhost:${PORT:-8080}/health" && \
+    uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level info'
