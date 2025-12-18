@@ -25,7 +25,7 @@ EXPOSE ${PORT}
 
 # Add health check using PORT environment variable
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD sh -c 'curl -f http://localhost:${PORT:-8002}/health || exit 1'
+    CMD sh -c 'curl -f http://localhost:${WEBSITE_SCRAPING_PORT:-${PORT:-8002}}/health || exit 1'
 
-# Run the application with uvicorn - use PORT env var from Railway
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8002}
+# Run the application with uvicorn - prefer WEBSITE_SCRAPING_PORT, else PORT, else default
+CMD sh -c 'uvicorn main:app --host 0.0.0.0 --port ${WEBSITE_SCRAPING_PORT:-${PORT:-8002}}'

@@ -19,12 +19,13 @@ COPY shared ./shared/
 # Set working directory
 WORKDIR /app/services/knowledgebase_ingestion
 
-# Expose port
-EXPOSE 8001
+# Expose port (prefer KB_INGESTION_PORT via runtime)
+ARG PORT=8001
+EXPOSE ${PORT}
 
-# Add health check
+# Add health check (prefer KB_INGESTION_PORT, else PLATFORM PORT, else default)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8001}/health || exit 1
+    CMD sh -c 'curl -f http://localhost:${KB_INGESTION_PORT:-${PORT:-8001}}/health || exit 1'
 
-# Run the application with uvicorn - use PORT env var from Railway
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001}
+# Run the application with uvicorn - prefer KB_INGESTION_PORT, else PORT, else default
+CMD sh -c 'uvicorn main:app --host 0.0.0.0 --port ${KB_INGESTION_PORT:-${PORT:-8001}}'

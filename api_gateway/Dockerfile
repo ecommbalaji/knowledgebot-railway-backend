@@ -56,9 +56,9 @@ RUN mkdir -p /app/logs && \
 ARG PORT=8080
 EXPOSE ${PORT}
 
-# Add health check (uses PORT env var at runtime)
+# Add health check (prefer API_GATEWAY_PORT, else PORT, else default)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD sh -c 'curl -f http://localhost:${PORT:-8080}/health || exit 1'
+    CMD sh -c 'curl -f http://localhost:${API_GATEWAY_PORT:-${PORT:-8080}}/health || exit 1'
 
-# Run the application with explicit module path and respect PORT env var at runtime
-CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level info --access-log'
+# Run the application with explicit module path and prefer API_GATEWAY_PORT, then PORT, then default
+CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${API_GATEWAY_PORT:-${PORT:-8080}} --log-level info --access-log'
