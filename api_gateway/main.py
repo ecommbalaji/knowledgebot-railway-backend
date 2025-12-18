@@ -10,7 +10,6 @@ from pydantic import BaseModel
 import os
 import sys
 from dotenv import load_dotenv
-from contextlib import asynccontextmanager
 
 # Load environment variables
 load_dotenv()
@@ -22,6 +21,9 @@ logging.basicConfig(
     stream=sys.stdout  # Use stdout only to avoid duplication
 )
 logger = logging.getLogger(__name__)
+
+# Debug logging to check if script starts
+logger.info("🔍 API Gateway script starting...")
 
 # Add startup logging
 logger.info("="*60)
@@ -50,39 +52,31 @@ else:
 
 logger.info(f"🚀 Application will start on port {PORT}")
 
-# Lifespan context manager for startup and shutdown events
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Handle application startup and shutdown events."""
-    # Startup
-    startup_time = time.time() - getattr(app, 'start_time', time.time())
-    logger.info(".2f")
+# Track application start time for uptime calculations
+app_start_time = time.time()
+
+logger.info("="*60)
+logger.info("🏗️ Creating FastAPI application...")
+
+app = FastAPI(title="Knowledge Bot API Gateway", version="1.0.0")
+
+# Store start time for uptime calculations
+app.start_time = app_start_time
+
+@app.on_event("startup")
+async def startup_event():
+    """Log when FastAPI application starts successfully."""
+    startup_time = time.time() - app.start_time
+    logger.info(f"Startup time: {startup_time:.2f} seconds")
     logger.info(f"🚀 FastAPI application started successfully on port {PORT}")
     logger.info("🏥 Health check endpoint: /health")
     logger.info("📊 Status endpoint: /status")
     logger.info("🎉 API Gateway is ready to accept requests!")
 
-    # Note: Routes are logged after app creation, not during lifespan startup
-    # to avoid accessing routes before they're fully registered
-
-    yield
-
-    # Shutdown
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Log when FastAPI application shuts down."""
     logger.info("🛑 FastAPI application shutting down")
-
-# Track application start time for uptime calculations
-app_start_time = time.time()
-
-logger.info("="*60)
-
-app = FastAPI(
-    title="Knowledge Bot API Gateway",
-    version="1.0.0",
-    lifespan=lifespan
-)
-
-# Store start time for uptime calculations
-app.start_time = app_start_time
 
 # Request logging middleware
 @app.middleware("http")
