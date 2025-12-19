@@ -326,58 +326,6 @@ async def health_check(request: Request):
         logger.error(f"💥 Critical health check error: {e}")
         raise HTTPException(status_code=503, detail=f"Health check failed: {str(e)}")
 
-
-@app.get("/ready")
-async def readiness_check(request: Request):
-    """Readiness endpoint to check critical dependencies."""
-    log_endpoint_request("api_gateway", "ready", request)
-    log_system_metrics("api_gateway")
-    try:
-        # Check if required environment variables are set
-        required_vars = ["KNOWLEDGEBASE_INGESTION_URL", "WEBSITE_SCRAPING_URL", "CHATBOT_ORCHESTRATION_URL"]
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
-
-        if missing_vars:
-            logger.error(f"Missing required environment variables: {missing_vars}")
-            raise HTTPException(status_code=503, detail=f"Missing environment variables: {missing_vars}")
-
-        # For serverless: Check service URLs are configured, but don't require them to be healthy
-        # Services start/stop independently in serverless, so gateway should be ready regardless
-        service_checks = []
-        services_to_check = [
-            ("knowledgebase_ingestion", os.getenv("KNOWLEDGEBASE_INGESTION_URL")),
-            ("website_scraping", os.getenv("WEBSITE_SCRAPING_URL")),
-            ("chatbot_orchestration", os.getenv("CHATBOT_ORCHESTRATION_URL")),
-        ]
-
-        configured_services = 0
-        for service_name, service_url in services_to_check:
-            if service_url:
-                configured_services += 1
-                # Just mark as configured - don't check health for readiness
-                service_checks.append({"name": service_name, "status": "configured", "url": service_url})
-            else:
-                service_checks.append({"name": service_name, "status": "not_configured"})
-
-        # API Gateway is ready if it has at least one service configured
-        if configured_services == 0:
-            logger.error("No downstream services are configured")
-            raise HTTPException(status_code=503, detail="No downstream services configured")
-
-        return {
-            "status": "ready",
-            "services": service_checks,
-            "serverless_optimized": True,
-            "note": "Services start/stop independently - gateway ready regardless of downstream health",
-            "timestamp": "2025-12-19T18:00:00Z"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Readiness check failed: {e}")
-        raise HTTPException(status_code=503, detail="Service not ready")
-
-
 @app.get("/status")
 async def system_status():
     """Check connections to all downstream services with detailed logging."""

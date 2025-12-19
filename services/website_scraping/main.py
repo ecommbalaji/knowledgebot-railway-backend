@@ -115,41 +115,6 @@ async def health_check(request: Request):
     log_endpoint_request("website_scraping", "health", request)
     return {"status": "healthy", "service": "website_scraping"}
 
-
-@app.get("/ready")
-async def readiness_check(request: Request):
-    """Readiness endpoint to check critical dependencies."""
-    log_endpoint_request("website_scraping", "ready", request)
-    log_system_metrics("website_scraping")
-    try:
-        # Check Gemini API key
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        if not gemini_key:
-            logger.error("GEMINI_API_KEY not configured")
-            raise HTTPException(status_code=503, detail="Gemini API key not configured")
-
-        # Check if we can initialize Gemini client (basic check)
-        try:
-            from google import genai
-            # Use the global genai_client if already initialized, or try a test init
-            test_client = genai.Client(api_key=gemini_key)
-            logger.debug("Gemini client initialized successfully for health check")
-        except Exception as e:
-            logger.error(f"Gemini client initialization failed: {e}")
-            raise HTTPException(status_code=503, detail="Gemini API not accessible")
-
-        return {
-            "status": "ready",
-            "services": ["gemini_api"],
-            "timestamp": "2025-12-19T18:00:00Z"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Readiness check failed: {e}")
-        raise HTTPException(status_code=503, detail="Service not ready")
-
-
 @app.post("/scrape", response_model=ScrapeResponse)
 async def scrape_website(request: ScrapeRequest):
     """

@@ -727,52 +727,6 @@ async def health_check(request: Request):
     log_endpoint_request("chatbot_orchestration", "health", request)
     return {"status": "healthy", "service": "chatbot_orchestration"}
 
-
-@app.get("/ready")
-async def readiness_check(request: Request):
-    """Readiness endpoint to check critical dependencies."""
-    log_endpoint_request("chatbot_orchestration", "ready", request)
-    log_system_metrics("chatbot_orchestration")
-    try:
-        # For serverless: Check configuration rather than actual connections
-        # Databases will be initialized lazily on first use
-        db_checks = []
-
-        # Check if database URLs are configured (lazy init will handle actual connections)
-        if settings.railway_postgres_url:
-            db_checks.append({"name": "railway_db", "status": "configured", "lazy_init": True})
-        else:
-            db_checks.append({"name": "railway_db", "status": "not_configured"})
-
-        if settings.neon_db_url:
-            db_checks.append({"name": "neon_db", "status": "configured", "lazy_init": True})
-        else:
-            db_checks.append({"name": "neon_db", "status": "not_configured"})
-
-        # Check AI components (lazy initialization)
-        ai_checks = []
-        if GEMINI_API_KEY:
-            ai_checks.append({"name": "gemini_api", "status": "configured"})
-        else:
-            ai_checks.append({"name": "gemini_api", "status": "not_configured"})
-
-        if OPENAI_API_KEY:
-            ai_checks.append({"name": "openai_api", "status": "configured"})
-        else:
-            ai_checks.append({"name": "openai_api", "status": "not_configured"})
-
-        return {
-            "status": "ready",
-            "databases": db_checks,
-            "ai_components": ai_checks,
-            "serverless_optimized": True,
-            "timestamp": "2025-12-19T18:00:00Z"
-        }
-    except Exception as e:
-        logger.error(f"Readiness check failed: {e}")
-        raise HTTPException(status_code=503, detail="Service not ready")
-
-
 @app.post("/chat", response_model=ChatSessionResponse)
 async def chat(request: ChatRequest):
     """

@@ -148,43 +148,6 @@ async def health_check(request: Request):
     log_endpoint_request("knowledgebase_ingestion", "health", request)
     return {"status": "healthy", "service": "knowledgebase_ingestion"}
 
-
-@app.get("/ready")
-async def readiness_check(request: Request):
-    """Readiness endpoint to check critical dependencies."""
-    log_endpoint_request("knowledgebase_ingestion", "ready", request)
-    log_system_metrics("knowledgebase_ingestion")
-    try:
-        # Check environment variables
-        required_vars = ["KB_INGESTION_PORT", "GEMINI_API_KEY"]
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
-
-        if missing_vars:
-            logger.error(f"Missing required environment variables: {missing_vars}")
-            raise HTTPException(status_code=503, detail=f"Missing environment variables: {missing_vars}")
-
-        # Check Gemini API key validity
-        try:
-            from google import genai
-            gemini_key = os.getenv("GEMINI_API_KEY")
-            test_client = genai.Client(api_key=gemini_key)
-            logger.debug("Gemini client initialized successfully for health check")
-        except Exception as e:
-            logger.error(f"Gemini client initialization failed: {e}")
-            raise HTTPException(status_code=503, detail="Gemini API not accessible")
-
-        return {
-            "status": "ready",
-            "services": ["gemini_api", "environment"],
-            "timestamp": "2025-12-19T18:00:00Z"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Readiness check failed: {e}")
-        raise HTTPException(status_code=503, detail="Service not ready")
-
-
 def calculate_sha256(file_path: str) -> str:
     """Calculate SHA256 hash of a file."""
     sha256_hash = hashlib.sha256()
