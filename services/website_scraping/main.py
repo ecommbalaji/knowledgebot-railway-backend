@@ -280,5 +280,5 @@ if __name__ == "__main__":
     import uvicorn
     # Railway sets PORT, fallback to 8002
     # Use service-specific port variable, fallback to Railway PORT, then default
-    port = int(os.getenv("WEBSITE_SCRAPING_PORT", os.getenv("PORT", "8002")))
+    port = int(os.getenv("WEBSITE_SCRAPING_PORT", "8002"))
     uvicorn.run(app, host="0.0.0.0", port=port)

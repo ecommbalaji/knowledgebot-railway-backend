@@ -123,25 +123,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Gemini
-logger.info("🔄 Initializing AI components...")
+# Initialize AI components (lazy initialization to avoid startup failures)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or settings.gemini_api_key
-genai_client = None
-if not GEMINI_API_KEY:
-    logger.warning("⚠️  GEMINI_API_KEY not set - some features will fail")
-else:
-    try:
-        genai_client = genai.Client(api_key=GEMINI_API_KEY)
-        logger.info("✅ Gemini client initialized")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Gemini client: {e}")
-
-# Initialize OpenAI model for Pydantic AI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or settings.openai_api_key
-if not OPENAI_API_KEY:
-    logger.warning("⚠️  OPENAI_API_KEY not set - chat endpoints will fail")
-else:
-    logger.info("✅ OpenAI API key configured")
+
+# Global clients - initialized lazily
+genai_client = None
+openai_model = None
+
+def get_genai_client():
+    """Lazy initialization of Gemini client."""
+    global genai_client
+    if genai_client is None and GEMINI_API_KEY:
+        try:
+            genai_client = genai.Client(api_key=GEMINI_API_KEY)
+            logger.info("✅ Gemini client initialized")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Gemini client: {e}")
+            genai_client = None
+    return genai_client
+
+def get_openai_model():
+    """Lazy initialization of OpenAI model."""
+    global openai_model
+    if openai_model is None and OPENAI_API_KEY:
+        try:
+            openai_model = OpenAIModel(MODEL_NAME, api_key=OPENAI_API_KEY)
+            logger.info("✅ OpenAI model initialized")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize OpenAI model: {e}")
+            openai_model = None
+    return openai_model
 
 MODEL_NAME = os.getenv("CHATBOT_MODEL", settings.chatbot_model)
 TEMPERATURE = float(os.getenv("CHATBOT_TEMPERATURE", str(settings.chatbot_temperature)))
@@ -524,6 +536,7 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
     This tool searches through uploaded documents and scraped content to find
     information relevant to the user's query.
     """
+    genai_client = get_genai_client()
     if not genai_client:
         return [SearchResult(
             file_name="System_Error",
@@ -733,10 +746,10 @@ async def readiness_check():
         else:
             db_checks.append({"name": "neon_db", "status": "not_configured"})
 
-        # Check AI components (already initialized at module level)
+        # Check AI components (lazy initialization)
         ai_checks = []
-        if GEMINI_API_KEY and genai_client:
-            ai_checks.append({"name": "gemini_api", "status": "ready"})
+        if GEMINI_API_KEY:
+            ai_checks.append({"name": "gemini_api", "status": "configured"})
         else:
             ai_checks.append({"name": "gemini_api", "status": "not_configured"})
 
@@ -1038,5 +1051,5 @@ if __name__ == "__main__":
     import uvicorn
     # Railway sets PORT, fallback to 8003
     # Use service-specific port variable, fallback to Railway PORT, then default
-    port = int(os.getenv("CHATBOT_ORCH_PORT", os.getenv("PORT", "8003")))
+    port = int(os.getenv("CHATBOT_ORCH_PORT", "8003"))
     uvicorn.run(app, host="0.0.0.0", port=port)
