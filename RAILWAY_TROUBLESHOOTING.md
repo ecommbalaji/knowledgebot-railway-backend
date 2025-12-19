@@ -15,10 +15,10 @@
 5. Save and redeploy
 
 **Root Directory Values for All Services**:
-- **API Gateway**: `api_gateway` (underscore)
-- **Knowledgebase Ingestion**: `services/knowledgebase_ingestion`
-- **Website Scraping**: `services/website_scraping`
-- **Chatbot Orchestration**: `services/chatbot_orchestration`
+- **API Gateway**: `.` (repository root)
+- **Knowledgebase Ingestion**: `.` (repository root)
+- **Website Scraping**: `.` (repository root)
+- **Chatbot Orchestration**: `.` (repository root)
 
 **Note**: Service names use hyphens (e.g., `api-gateway`), but root directories use underscores (e.g., `api_gateway`).
 

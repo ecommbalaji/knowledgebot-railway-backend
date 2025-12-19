@@ -6,9 +6,9 @@ from typing import Optional
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
-    # API Keys
-    gemini_api_key: str
-    openai_api_key: str
+    # API Keys (optional - services only require what they need)
+    gemini_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
     
     # Service URLs
     knowledgebase_ingestion_url: str = "http://localhost:8001"

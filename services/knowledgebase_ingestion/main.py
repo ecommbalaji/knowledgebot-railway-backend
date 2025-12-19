@@ -33,8 +33,12 @@ try:
 except Exception:
     logger.debug("Could not adjust sys.path for shared imports")
 
-from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error
 setup_global_exception_logging("knowledgebase_ingestion")
+
+# Validate required environment variables for this service
+if not settings.gemini_api_key:
+    raise dependency_unavailable_error("gemini_api_key", "Knowledgebase ingestion service requires GEMINI_API_KEY")
 
 # Lifespan context manager for startup and shutdown events
 @asynccontextmanager
