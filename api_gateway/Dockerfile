@@ -23,11 +23,11 @@ RUN echo "🚀 Starting API Gateway Docker build..." && \
 RUN echo "📦 Installing system dependencies..." && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        build-essential \
-        libxml2-dev \
-        libxslt1-dev \
-        curl \
-        && \
+    build-essential \
+    libxml2-dev \
+    libxslt1-dev \
+    curl \
+    && \
     echo "✅ System dependencies installed" && \
     rm -rf /var/lib/apt/lists/* && \
     echo "🧹 Cleaned up apt cache"
@@ -57,8 +57,8 @@ RUN mkdir -p /app/logs && \
 
 
 # Update health check to use the `/ready` endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=5 \
-    CMD sh -c 'curl -f http://localhost:${API_GATEWAY_PORT:-8000}/ready || exit 1'
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD sh -c 'curl -f http://localhost:${API_GATEWAY_PORT:-${PORT:-8080}}/ready || exit 1'
 
-# Run the application with explicit module path and prefer API_GATEWAY_PORT, then PORT, then default
-CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${API_GATEWAY_PORT:-8000} --log-level info --access-log'
+# Run the application with explicit module path and prefer API_GATEWAY_PORT, then PORT, then default 8080
+CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${API_GATEWAY_PORT:-${PORT:-8080}} --log-level info --access-log'

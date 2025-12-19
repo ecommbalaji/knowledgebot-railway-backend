@@ -41,8 +41,8 @@ logger.info(f"KNOWLEDGEBASE_INGESTION_URL: {os.getenv('KNOWLEDGEBASE_INGESTION_U
 logger.info(f"WEBSITE_SCRAPING_URL: {os.getenv('WEBSITE_SCRAPING_URL', 'http://localhost:8002')}")
 logger.info(f"CHATBOT_ORCHESTRATION_URL: {os.getenv('CHATBOT_ORCHESTRATION_URL', 'http://localhost:8003')}")
 # Get port configuration
-PORT = int(os.getenv('PORT', '8080'))
-logger.info(f"PORT: {PORT}")
+PORT = int(os.getenv('API_GATEWAY_PORT', os.getenv('PORT', '8080')))
+logger.info(f"PORT being used: {PORT}")
 
 # Check if required environment variables are set
 required_env_vars = ['KNOWLEDGEBASE_INGESTION_URL', 'WEBSITE_SCRAPING_URL', 'CHATBOT_ORCHESTRATION_URL']
@@ -61,7 +61,7 @@ try:
 except Exception:
     logger.debug("Could not adjust sys.path for shared imports")
 
-from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, log_system_metrics, log_endpoint_request
 
 # Install global exception and signal handlers early so any startup issues get logged
 setup_global_exception_logging("api_gateway")
@@ -245,8 +245,9 @@ class ReviewResponse(BaseModel):
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(request: Request):
     """Health check endpoint - returns gateway status with detailed logging."""
+    log_endpoint_request("api_gateway", "health", request)
     start_time = time.time()
     logger.info("🔍 Health check request received")
 
@@ -326,8 +327,10 @@ async def health_check():
 
 
 @app.get("/ready")
-async def readiness_check():
+async def readiness_check(request: Request):
     """Readiness endpoint to check critical dependencies."""
+    log_endpoint_request("api_gateway", "ready", request)
+    log_system_metrics("api_gateway")
     try:
         # Check if required environment variables are set
         required_vars = ["KNOWLEDGEBASE_INGESTION_URL", "WEBSITE_SCRAPING_URL", "CHATBOT_ORCHESTRATION_URL"]
