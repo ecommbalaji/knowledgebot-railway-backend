@@ -130,10 +130,9 @@ async def readiness_check(request: Request):
 
         # Check if we can initialize Gemini client (basic check)
         try:
-            import google.genai as genai
-            genai.configure(api_key=gemini_key)
-            # Try to list models (this will fail if API key is invalid)
-            client = genai.Client(api_key=gemini_key)
+            from google import genai
+            # Use the global genai_client if already initialized, or try a test init
+            test_client = genai.Client(api_key=gemini_key)
             logger.debug("Gemini client initialized successfully for health check")
         except Exception as e:
             logger.error(f"Gemini client initialization failed: {e}")
