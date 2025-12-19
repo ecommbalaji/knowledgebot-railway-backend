@@ -264,7 +264,6 @@ async def health_check(request: Request):
         # Log environment checks
         logger.info("✅ Application is responsive")
         logger.info(f"📊 Health status: {health_status['status']}")
-        logger.info(".2f")
 
         # Check critical dependencies (basic connectivity)
         try:
@@ -309,7 +308,7 @@ async def health_check(request: Request):
 
         # Log final health status
         duration = time.time() - start_time
-        logger.info(".3f")
+        logger.info(f"⏱️ Health check duration: {duration:.3f}s")
 
         if health_status["status"] == "healthy":
             logger.info("🎉 Health check completed successfully")
@@ -322,7 +321,7 @@ async def health_check(request: Request):
 
     except Exception as e:
         duration = time.time() - start_time
-        logger.error(".3f")
+        logger.error(f"⏱️ Health check heartbeat error after {duration:.3f}s")
         logger.error(f"💥 Critical health check error: {e}")
         raise HTTPException(status_code=503, detail=f"Health check failed: {str(e)}")
 

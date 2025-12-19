@@ -67,11 +67,11 @@ except Exception:
 from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics, log_endpoint_request
 setup_global_exception_logging("chatbot_orchestration")
 
-# Validate required environment variables for this service
+# Log status of required environment variables
 if not settings.gemini_api_key:
-    raise dependency_unavailable_error("gemini_api_key", "Chatbot orchestration service requires GEMINI_API_KEY")
+    logger.error("❌ GEMINI_API_KEY is not configured - chat features will be unavailable")
 if not settings.openai_api_key:
-    raise dependency_unavailable_error("openai_api_key", "Chatbot orchestration service requires OPENAI_API_KEY")
+    logger.error("❌ OPENAI_API_KEY is not configured - chatbot service will fail to operate")
 
 # Lifespan context manager for startup and shutdown events
 @asynccontextmanager
@@ -725,7 +725,16 @@ def create_agent(file_context: Optional[List[SearchResult]] = None) -> Optional[
 async def health_check(request: Request):
     """Health check endpoint."""
     log_endpoint_request("chatbot_orchestration", "health", request)
-    return {"status": "healthy", "service": "chatbot_orchestration"}
+    
+    # Check critical dependencies
+    health_status = {"status": "healthy", "service": "chatbot_orchestration"}
+    
+    if not settings.gemini_api_key or not settings.openai_api_key:
+        health_status["status"] = "unhealthy"
+        health_status["error"] = "Missing required API keys"
+        return JSONResponse(status_code=503, content=health_status)
+        
+    return health_status
 
 @app.post("/chat", response_model=ChatSessionResponse)
 async def chat(request: ChatRequest):
