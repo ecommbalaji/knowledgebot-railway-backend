@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 # Log port and environment basic state
 logger.info("🔍 --- Chatbot Startup Diagnostics ---")
+logger.info("🆔 SERVICE_IDENTITY: CHATBOT_ORCHESTRATION_V1")
 logger.info(f"🐍 Python: {sys.version}")
 logger.info(f"📂 Current Dir: {os.getcwd()}")
 logger.info(f"🌐 CHATBOT_ORCH_PORT: {os.getenv('CHATBOT_ORCH_PORT')}")

@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Log port and environment basic state
 logger.info("🔍 --- API Gateway Startup Diagnostics ---")
+logger.info("🆔 SERVICE_IDENTITY: API_GATEWAY_V1")
 logger.info(f"🐍 Python: {sys.version}")
 logger.info(f"📂 Current Dir: {os.getcwd()}")
 logger.info(f"🌐 API_GATEWAY_PORT: {os.getenv('API_GATEWAY_PORT')}")
