@@ -1,23 +1,42 @@
-"""Chatbot Orchestration Service - Pydantic AI Agent with intelligent data source routing."""
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Annotated
+# --- 🔍 STARTUP DIAGNOSTIC ---
 import os
-import logging
-from dataclasses import dataclass
-from dotenv import load_dotenv
-import uuid
-from datetime import datetime
-from google import genai
-from contextlib import asynccontextmanager
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
-from pydantic_ai.models.openai import OpenAIModel
-import asyncio
 import sys
-from pathlib import Path
-import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Log port and environment basic state
+logger.info("🔍 --- Chatbot Startup Diagnostics ---")
+logger.info(f"🐍 Python: {sys.version}")
+logger.info(f"📂 Current Dir: {os.getcwd()}")
+logger.info(f"🌐 CHATBOT_ORCH_PORT: {os.getenv('CHATBOT_ORCH_PORT')}")
+logger.info(f"🌐 PORT (Railway): {os.getenv('PORT')}")
+logger.info(f"🔍 ----------------------------------")
+
+try:
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel, Field
+    from typing import Optional, List, Dict, Any, Annotated
+    from dataclasses import dataclass
+    from dotenv import load_dotenv
+    import uuid
+    from datetime import datetime
+    from google import genai
+    from contextlib import asynccontextmanager
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
+    from pydantic_ai.models.openai import OpenAIModel
+    import asyncio
+    import json
+    from pathlib import Path
+    logger.info("✅ Core modules imported successfully")
+except ImportError as e:
+    logger.critical(f"💥 IMPORT ERROR: Could not load required module: {e}")
+    # Print search path for debugging
+    logger.info(f"📍 Python Path: {sys.path}")
+    raise
 
 # Add shared directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -81,11 +100,8 @@ async def lifespan(app: FastAPI):
 
     # For serverless optimization: Skip heavy DB initialization during startup
     # Databases will be initialized lazily on first request to reduce cold start time
-    logger.info("🚀 Chatbot orchestration service started successfully (lazy DB init)")
-    logger.info("🏥 Health check endpoint: /health")
-    logger.info("💬 Chat endpoint: POST /chat")
-    logger.info("📊 Sessions endpoint: GET /sessions")
-
+    logger.info("Chatbot orchestration service started successfully (lazy DB init)")
+    logger.info(f"Health check endpoint: /health (Port: {os.getenv('PORT', '8003')})")
     yield
 
     # Shutdown - Close database connections if they exist
@@ -721,12 +737,17 @@ def create_agent(file_context: Optional[List[SearchResult]] = None) -> Optional[
     return agent
 
 
+@app.get("/")
+async def root_diagnostic(request: Request):
+    """Simple root endpoint for basic liveliness check."""
+    logger.info(f"Root diagnostic check invoked: {request.url}")
+    return {"status": "ok", "message": "Chatbot Orchestration Is Alive", "port_env": os.getenv("PORT")}
+
 @app.get("/health")
 async def health_check(request: Request):
     """Health check endpoint."""
+    logger.info(f"Health check invoked: {request.url}")
     log_endpoint_request("chatbot_orchestration", "health", request)
-    
-    # Check critical dependencies
     return {"status": "healthy", "service": "chatbot_orchestration"}
 
 @app.post("/chat", response_model=ChatSessionResponse)

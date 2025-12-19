@@ -38,6 +38,9 @@ RUN ls -R /app
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD sh -c 'curl -f http://localhost:${CHATBOT_ORCH_PORT:-${PORT:-8003}}/health || exit 1'
 
+# Expose default port
+EXPOSE 8003
+
 # Run the application with uvicorn - prefer CHATBOT_ORCH_PORT, else PORT, else default 8003
 RUN echo "🚀 --- Final Build Complete ---"
-CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${CHATBOT_ORCH_PORT:-${PORT:-8003}} --log-level debug --access-log"]
+CMD ["sh", "-c", "echo '🌐 Runtime Port Check: CHATBOT_ORCH_PORT='${CHATBOT_ORCH_PORT}' PORT='${PORT}; exec uvicorn main:app --host 0.0.0.0 --port ${CHATBOT_ORCH_PORT:-${PORT:-8003}} --log-level debug --access-log"]
