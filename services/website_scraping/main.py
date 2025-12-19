@@ -13,6 +13,7 @@ from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
 import tempfile
 from contextlib import asynccontextmanager
 from shared.config import settings
+from shared.config import settings
 
 load_dotenv()
 
@@ -27,7 +28,7 @@ try:
 except Exception:
     logger.debug("Could not adjust sys.path for shared imports")
 
-from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics
 setup_global_exception_logging("website_scraping")
 
 # Validate required environment variables for this service
@@ -114,9 +115,12 @@ async def health_check():
     return {"status": "healthy", "service": "website_scraping"}
 
 
+
+
 @app.get("/ready")
 async def readiness_check():
     """Readiness endpoint to check critical dependencies."""
+    log_system_metrics("website_scraping")
     try:
         # Check Gemini API key
         gemini_key = os.getenv("GEMINI_API_KEY")

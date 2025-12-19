@@ -33,7 +33,7 @@ try:
 except Exception:
     logger.debug("Could not adjust sys.path for shared imports")
 
-from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics
 setup_global_exception_logging("knowledgebase_ingestion")
 
 # Validate required environment variables for this service
@@ -151,6 +151,7 @@ async def health_check():
 @app.get("/ready")
 async def readiness_check():
     """Readiness endpoint to check critical dependencies."""
+    log_system_metrics("knowledgebase_ingestion")
     try:
         # Check environment variables
         required_vars = ["KB_INGESTION_PORT", "GEMINI_API_KEY"]

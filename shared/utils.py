@@ -11,6 +11,7 @@ import signal
 import traceback
 import faulthandler
 from tenacity import retry, stop_after_attempt, wait_exponential
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -143,3 +144,20 @@ def register_fastapi_exception_handlers(app: FastAPI, service_name: str) -> None
                 "message": "An unexpected error occurred. Check service logs for details."
             },
         )
+
+
+def log_system_metrics(service_name: str) -> None:
+    """Log system memory and CPU usage metrics for a given service.
+
+    Args:
+        service_name: Name of the service for logging context.
+    """
+    svc_logger = logging.getLogger(service_name)
+    try:
+        memory = psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=1)
+        svc_logger.info(f"📊 System Metrics for {service_name}:")
+        svc_logger.info(f"  Memory: {memory.used / (1024 ** 2):.2f} MB / {memory.total / (1024 ** 2):.2f} MB ({memory.percent}%)")
+        svc_logger.info(f"  CPU Usage: {cpu}%")
+    except Exception as e:
+        svc_logger.error(f"Error logging system metrics: {e}")

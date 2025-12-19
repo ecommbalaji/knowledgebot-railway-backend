@@ -64,7 +64,7 @@ try:
 except Exception:
     logger.debug("Could not adjust sys.path for shared imports")
 
-from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics
 setup_global_exception_logging("chatbot_orchestration")
 
 # Validate required environment variables for this service
@@ -730,6 +730,7 @@ async def health_check():
 @app.get("/ready")
 async def readiness_check():
     """Readiness endpoint to check critical dependencies."""
+    log_system_metrics("chatbot_orchestration")
     try:
         # For serverless: Check configuration rather than actual connections
         # Databases will be initialized lazily on first use

@@ -25,6 +25,7 @@ playwright>=1.56.0
 pydantic-settings>=2.5.0
 aiofiles>=24.1.0
 python-multipart>=0.0.9
+psutil>=6.1.0
 
 # Cloudflare R2 (S3-compatible)
 # Use version compatible with pydantic-ai-slim bedrock extra (requires boto3>=1.40.14)
