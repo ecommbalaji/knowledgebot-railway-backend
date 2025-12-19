@@ -19,7 +19,8 @@ COPY shared ./shared/
 # Set working directory
 WORKDIR /app/services/website_scraping
 
-
+# Set the PYTHONPATH environment variable to include the /app directory
+ENV PYTHONPATH="/app"
 
 # Update health check to use the `/ready` endpoint
 # More forgiving start-period to account for cold starts and heavy startup tasks
