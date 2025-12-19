@@ -3,8 +3,7 @@ dockerfilePath = "services/website_scraping/Dockerfile"
 rootDirectory = "."
 
 [deploy]
-startCommand = "python main.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
-healthcheckPath = "/health"
+healthcheckPath = "/ready"
 healthcheckTimeout = 100

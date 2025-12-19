@@ -7,8 +7,7 @@ dockerfilePath = "api_gateway/Dockerfile"
 rootDirectory = "."
 
 [deploy]
-startCommand = "python main.py"
-healthcheckPath = "/health"
+healthcheckPath = "/ready"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
