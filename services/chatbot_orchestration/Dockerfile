@@ -19,7 +19,8 @@ COPY shared ./shared/
 # Set working directory
 WORKDIR /app/services/chatbot_orchestration
 
-
+# Set the PYTHONPATH environment variable to include the /app directory
+ENV PYTHONPATH="/app"
 
 # Update health check to use the `/ready` endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=5 \

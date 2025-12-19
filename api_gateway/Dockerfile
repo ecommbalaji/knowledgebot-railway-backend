@@ -9,6 +9,8 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONHASHSEED=random
 ENV PIP_NO_CACHE_DIR=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+# Set the PYTHONPATH environment variable to include the /app directory
+ENV PYTHONPATH="/app"
 
 WORKDIR /app
 

@@ -19,7 +19,8 @@ COPY shared ./shared/
 # Set working directory
 WORKDIR /app/services/knowledgebase_ingestion
 
-
+# Set the PYTHONPATH environment variable to include the /app directory
+ENV PYTHONPATH="/app"
 
 # Update health check to use the `/ready` endpoint
 # Increased start-period and retries to reduce premature restarts
