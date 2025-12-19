@@ -4,6 +4,7 @@ import os
 import logging
 from typing import Optional
 from contextlib import asynccontextmanager
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,9 @@ class Database:
         self.connection_url = connection_url
         self._pool: Optional[asyncpg.Pool] = None
     
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def connect(self, min_size: int = 5, max_size: int = 20):
-        """Create connection pool."""
+        """Create connection pool with retry logic."""
         try:
             self._pool = await asyncpg.create_pool(
                 self.connection_url,
