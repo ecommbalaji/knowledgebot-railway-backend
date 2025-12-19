@@ -190,6 +190,150 @@ async def get_or_create_user(email: str) -> str:
         return None
 
 
+async def _stream_to_temp_file(file: UploadFile, original_filename: str) -> tuple[str, int]:
+    """Stream an uploaded file to a temporary location."""
+    import tempfile
+    file_ext = os.path.splitext(original_filename)[1] or ".bin"
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+        tmp_path = tmp_file.name
+        file_size = 0
+        logger.info(f"💾 [STREAM] Starting stream of {original_filename} to {tmp_path}")
+        
+        while chunk := await file.read(1024 * 1024):
+            tmp_file.write(chunk)
+            file_size += len(chunk)
+        
+        logger.info(f"✅ [STREAM] Stream complete. Total size: {file_size} bytes")
+        return tmp_path, file_size
+
+
+async def _persist_to_r2(tmp_path: str, original_filename: str, file_display_name: str, 
+                        content_type: str, email: str):
+    """Upload a file to Cloudflare R2 if configured."""
+    r2_result, r2_key, r2_url = None, None, None
+    
+    if r2_storage:
+        logger.info(f"☁️ [R2] Initiating upload for {original_filename}")
+        try:
+            r2_result = await r2_storage.upload_file(
+                file_path=tmp_path,
+                content_type=content_type,
+                metadata={
+                    'original_filename': original_filename,
+                    'display_name': file_display_name,
+                    'uploaded_by': email
+                }
+            )
+            r2_key = r2_result.get('key')
+            r2_url = r2_result.get('url')
+            logger.info(f"✅ [R2] Upload successful. Key: {r2_key}")
+        except Exception as e:
+            logger.warning(f"⚠️ [R2] Upload failed, but continuing: {e}")
+    else:
+        logger.info("ℹ️ [R2] Skipping - Storage not configured")
+        
+    return r2_result, r2_key, r2_url
+
+
+async def _process_with_gemini(tmp_path: str, file_display_name: str, content_type: str):
+    """Upload to Gemini FileSearch and poll for processing completion."""
+    logger.info(f"🤖 [GEMINI] Uploading {file_display_name} to FileSearch...")
+    uploaded_file = genai_client.files.upload(
+        path=tmp_path,
+        config=dict(
+            display_name=file_display_name,
+            mime_type=content_type
+        )
+    )
+    
+    logger.info(f"✅ [GEMINI] Upload complete. File ID: {uploaded_file.name}, State: {uploaded_file.state.name}")
+    logger.info(f"🔗 [GEMINI] URI: {getattr(uploaded_file, 'uri', 'N/A')}")
+    
+    final_state = uploaded_file.state.name
+    gemini_processed_at = None
+    
+    try:
+        for i in range(15):  # Poll for up to 30 seconds
+            current_file = genai_client.files.get(name=uploaded_file.name)
+            final_state = current_file.state.name
+            logger.info(f"🔄 [GEMINI] Polling state (Attempt {i+1}/15): {final_state}")
+            
+            if final_state == "ACTIVE":
+                from datetime import datetime
+                gemini_processed_at = datetime.utcnow()
+                logger.info("⚡ [GEMINI] Processing complete - File is now ACTIVE")
+                break
+            elif final_state == "FAILED":
+                logger.error(f"❌ [GEMINI] Processing FAILED for {uploaded_file.name}")
+                break
+                
+            await asyncio.sleep(2)
+    except Exception as e:
+        logger.warning(f"⚠️ [GEMINI] Error during polling: {e}")
+        
+    return uploaded_file, final_state, gemini_processed_at
+
+
+async def _record_metadata(user_id: str, original_filename: str, file_display_name: str, 
+                         file_ext: str, r2_url: str, r2_key: str, uploaded_file: Any, 
+                         file_size: int, sha256_hash: str, r2_result: Any, 
+                         final_state: str, gemini_processed_at: Any):
+    """Persist file metadata and metrics to the PostgreSQL database."""
+    db_record_id = None
+    if not railway_db:
+        logger.warning("⚠️ [DB] Database unavailable - Skipping metadata record")
+        return None
+
+    try:
+        logger.info(f"🗄️ [DB] Saving metadata for {original_filename}")
+        db_record_id = await railway_db.fetchval(
+            """
+            INSERT INTO file_uploads (
+                user_id, original_filename, display_name, file_extension,
+                cloudflare_r2_url, cloudflare_r2_key, gemini_file_name, gemini_file_uri,
+                mime_type, size_bytes, sha256_hash,
+                r2_upload_status, gemini_upload_status, gemini_state,
+                gemini_processed_at, expires_at, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            RETURNING id
+            """,
+            user_id,
+            original_filename,
+            file_display_name,
+            file_ext.lstrip('.'),
+            r2_url,
+            r2_key,
+            uploaded_file.name,
+            getattr(uploaded_file, 'uri', None),
+            uploaded_file.mime_type or "application/octet-stream",
+            file_size,
+            sha256_hash,
+            'completed' if r2_result else 'skipped',
+            final_state.lower(),
+            final_state,
+            gemini_processed_at,
+            uploaded_file.expiration_time if hasattr(uploaded_file, 'expiration_time') else None,
+            json.dumps({'r2_uploaded': r2_result is not None, 'gemini_file_id': uploaded_file.name})
+        )
+        logger.info(f"✅ [DB] Record created with ID: {db_record_id}")
+        
+        # Log metric
+        await railway_db.execute(
+            """
+            INSERT INTO metrics (metric_type, metric_name, value, unit, user_id, file_upload_id, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            'file_upload', 'file_size_bytes', file_size, 'bytes', 
+            user_id, db_record_id, json.dumps({'filename': original_filename})
+        )
+    except Exception as e:
+        logger.error(f"❌ [DB] Error recording metadata: {e}")
+        
+    return db_record_id
+
+
 @app.post("/upload", response_model=UploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
@@ -197,218 +341,91 @@ async def upload_document(
     user_email: Optional[str] = Header(None, alias="X-User-Email")
 ):
     """
-    Upload a document: R2 -> Gemini -> PostgreSQL metadata.
-
-    Args:
-        file: The file to upload
-        display_name: Optional display name for the file
-        user_email: Optional user email from header (for tracking)
-
-    Returns:
-        UploadResponse with file information
+    Modularized Document Ingestion Pipeline:
+    1. Stream to local temp storage
+    2. Optional persistence to Cloudflare R2
+    3. Mandatory processing with Gemini FileSearch
+    4. Metadata & Metrics recording in PostgreSQL
     """
     if not genai_client:
         from shared.utils import dependency_unavailable_error
         raise dependency_unavailable_error("gemini", "client not configured")
 
-    r2_result = None
-    db_record_id = None
-    user_id = None
+    # Initialize variables for cleanup and tracking
+    tmp_path = None
+    file_display_name = display_name or file.filename or "uploaded_file"
+    original_filename = file.filename or "uploaded_file"
+    email = user_email or settings.default_user_email
+    
+    logger.info(f"🚀 [UPLOAD] Initiating pipeline for: {original_filename}")
 
     try:
-        # Use display name or filename
-        file_display_name = display_name or file.filename or "uploaded_file"
-        original_filename = file.filename or "uploaded_file"
-
-        logger.info(f"📁 Processing upload: {original_filename} (display: {file_display_name})")
-
-        # Get or create user
-        email = user_email or settings.default_user_email
-        logger.info(f"👤 User: {email}")
-
+        # Step 0: User Setup
+        user_id = None
         if railway_db:
             user_id = await get_or_create_user(email)
-            logger.info(f"🆔 User ID: {user_id}")
-        else:
-            logger.warning("⚠️  Database not available - user tracking disabled")
+            logger.info(f"👤 [UPLOAD] User: {email} (ID: {user_id})")
 
-        # Gemini API requires file path, so write to temp file
-        import tempfile
+        # Step 1: Stream to disk
+        tmp_path, file_size = await _stream_to_temp_file(file, original_filename)
+        sha256_hash = calculate_sha256(tmp_path)
+        logger.info(f"🔢 [UPLOAD] File hash: {sha256_hash}")
+
+        # Step 2: Persist to R2
+        r2_result, r2_key, r2_url = await _persist_to_r2(
+            tmp_path, original_filename, file_display_name, 
+            file.content_type or "application/octet-stream", email
+        )
+
+        # Step 3: Process with Gemini
+        uploaded_file, final_state, gemini_processed_at = await _process_with_gemini(
+            tmp_path, file_display_name, file.content_type or "application/octet-stream"
+        )
+
+        # Step 4: Record Metadata
         file_ext = os.path.splitext(original_filename)[1] or ".bin"
+        db_record_id = await _record_metadata(
+            user_id, original_filename, file_display_name, file_ext,
+            r2_url, r2_key, uploaded_file, file_size, sha256_hash,
+            r2_result, final_state, gemini_processed_at
+        )
 
-        # Stream file to disk to avoid OOM
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
-            # Read in 1MB chunks
-            file_size = 0
-            while chunk := await file.read(1024 * 1024):
-                tmp_file.write(chunk)
-                file_size += len(chunk)
-            tmp_path = tmp_file.name
+        # Step 5: Construct Response
+        file_info = FileInfo(
+            name=uploaded_file.name,
+            display_name=uploaded_file.display_name,
+            mime_type=uploaded_file.mime_type,
+            create_time=uploaded_file.create_time.isoformat() if uploaded_file.create_time else None,
+            update_time=uploaded_file.update_time.isoformat() if uploaded_file.update_time else None,
+            expiration_time=uploaded_file.expiration_time.isoformat() if uploaded_file.expiration_time else None,
+            size_bytes=str(uploaded_file.size_bytes or file_size),
+            sha256_hash=sha256_hash,
+            uri=getattr(uploaded_file, 'uri', None),
+            state=final_state,
+            r2_url=r2_url,
+            r2_key=r2_key,
+            db_record_id=str(db_record_id) if db_record_id else None
+        )
 
-            # Step 1: Upload to Cloudflare R2 (if configured)
-            r2_key = None
-            r2_url = None
-            if r2_storage:
-                logger.info("☁️  R2 storage is configured, attempting upload...")
-                try:
-                    logger.info(f"📤 Uploading file to R2: {original_filename}")
-                    r2_result = await r2_storage.upload_file(
-                        file_path=tmp_path,
-                        content_type=file.content_type or "application/octet-stream",
-                        metadata={
-                            'original_filename': original_filename,
-                            'display_name': file_display_name,
-                            'uploaded_by': email
-                        }
-                    )
-                    # Debug: log the raw R2 upload result for troubleshooting
-                    try:
-                        logger.info(f"R2 upload result (raw): {r2_result}")
-                    except Exception:
-                        logger.debug("Could not stringify r2_result")
-                    r2_key = r2_result.get('key')
-                    r2_url = r2_result.get('url')
-                    is_private = r2_result.get('is_private', False)
+        logger.info(f"🏁 [UPLOAD] Pipeline successful for {original_filename}")
+        return UploadResponse(
+            success=True,
+            file=file_info,
+            message=f"File processed successfully: {file_display_name}"
+        )
 
-                    logger.info(f"✅ File uploaded to R2 successfully: {r2_key}")
-                    if r2_url:
-                        logger.info(f"🔗 R2 URL: {r2_url}")
-                    else:
-                        logger.info("🔒 Private R2 bucket - file accessible via signed URLs or API only")
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to upload file to R2: {e}")
-            else:
-                logger.warning("⚠️  R2 storage not configured - skipping R2 upload")
-
-            # Step 2: Calculate file hash
-            sha256_hash = calculate_sha256(tmp_path)
-
-            # Step 3: Upload to Gemini FileSearch
-            logger.info("🤖 Uploading file to Gemini FileSearch...")
-            uploaded_file = genai_client.files.upload(
-                path=tmp_path,
-                config=dict(
-                    display_name=file_display_name,
-                    mime_type=file.content_type or "application/octet-stream"
-                )
-            )
-
-            logger.info(f"✅ Uploaded file to Gemini: {uploaded_file.name}, initial state: {uploaded_file.state.name}")
-
-            # Debug: log additional Gemini file attributes to help trace visibility
-            try:
-                logger.info(f"Gemini uploaded file attributes: name={getattr(uploaded_file, 'name', None)}, uri={getattr(uploaded_file, 'uri', None)}, display_name={getattr(uploaded_file, 'display_name', None)}")
-            except Exception:
-                logger.debug("Could not log uploaded_file attributes")
-
-            # Poll for ACTIVE state
-            final_state = uploaded_file.state.name
-            gemini_processed_at = None
-            try:
-                for _ in range(15):  # Wait up to 30 seconds
-                    current_file = genai_client.files.get(name=uploaded_file.name)
-                    final_state = current_file.state.name
-                    logger.info(f"Polling file {uploaded_file.name} state: {final_state}")
-
-                    if final_state == "ACTIVE":
-                        from datetime import datetime
-                        gemini_processed_at = datetime.utcnow()
-                        break
-                    elif final_state == "FAILED":
-                        logger.error(f"File {uploaded_file.name} failed processing")
-                        break
-
-                    await asyncio.sleep(2)
-            except Exception as e:
-                logger.warning(f"Error polling file state: {e}")
-
-            # Step 4: Save metadata to PostgreSQL
-            if railway_db:
-                try:
-                    db_record_id = await railway_db.fetchval(
-                        """
-                        INSERT INTO file_uploads (
-                            user_id, original_filename, display_name, file_extension,
-                            cloudflare_r2_url, cloudflare_r2_key, gemini_file_name, gemini_file_uri,
-                            mime_type, size_bytes, sha256_hash,
-                            r2_upload_status, gemini_upload_status, gemini_state,
-                            gemini_processed_at, expires_at, metadata
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-                        RETURNING id
-                        """,
-                        user_id,
-                        original_filename,
-                        file_display_name,
-                        file_ext.lstrip('.'),
-                        r2_url,
-                        r2_key,
-                        uploaded_file.name,
-                        getattr(uploaded_file, 'uri', None),
-                        file.content_type or "application/octet-stream",
-                        file_size,
-                        sha256_hash,
-                        'completed' if r2_result else 'skipped',
-                        final_state.lower(),
-                        final_state,
-                        gemini_processed_at,
-                        uploaded_file.expiration_time if hasattr(uploaded_file, 'expiration_time') and uploaded_file.expiration_time else None,
-                        json.dumps({
-                            'r2_uploaded': r2_result is not None,
-                            'gemini_file_id': uploaded_file.name
-                        })
-                    )
-                    logger.info(f"File metadata saved to database: {db_record_id}")
-
-                    # Record metric
-                    await railway_db.execute(
-                        """
-                        INSERT INTO metrics (metric_type, metric_name, value, unit, user_id, file_upload_id, metadata)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                        """,
-                        'file_upload',
-                        'file_size_bytes',
-                        file_size,
-                        'bytes',
-                        user_id,
-                        db_record_id,
-                        json.dumps({'filename': original_filename})
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to save metadata to database: {e}")
-                    # Continue even if DB save fails
-
-            file_info = FileInfo(
-                name=uploaded_file.name,
-                display_name=uploaded_file.display_name,
-                mime_type=uploaded_file.mime_type,
-                create_time=uploaded_file.create_time.isoformat() if uploaded_file.create_time else None,
-                update_time=uploaded_file.update_time.isoformat() if uploaded_file.update_time else None,
-                expiration_time=uploaded_file.expiration_time.isoformat() if uploaded_file.expiration_time else None,
-                size_bytes=str(uploaded_file.size_bytes) if uploaded_file.size_bytes else str(file_size),
-                sha256_hash=sha256_hash,
-                uri=getattr(uploaded_file, 'uri', None),
-                state=final_state,
-                r2_url=r2_url,
-                r2_key=r2_key,
-                db_record_id=str(db_record_id) if db_record_id else None
-            )
-
-            return UploadResponse(
-                success=True,
-                file=file_info,
-                message=f"File uploaded successfully: {file_display_name}"
-            )
     except Exception as e:
-        logger.error(f"Error uploading file: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        logger.error(f"❌ [UPLOAD] Pipeline failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+        
     finally:
-        # Clean up temp file
-        try:
-            if 'tmp_path' in locals() and os.path.exists(tmp_path):
+        # Guaranteed cleanup of local temporary file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
                 os.unlink(tmp_path)
-        except Exception:
-            logger.warning("Failed to clean up temp file", exc_info=True)
+                logger.debug(f"🧹 [UPLOAD] Cleaned up: {tmp_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ [UPLOAD] Failed to clean up {tmp_path}: {e}")
 
 
 @app.get("/files", response_model=FilesResponse)
