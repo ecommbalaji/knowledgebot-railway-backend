@@ -66,7 +66,6 @@ from shared.utils import setup_global_exception_logging, register_fastapi_except
 # Install global exception and signal handlers early so any startup issues get logged
 setup_global_exception_logging("api_gateway")
 
-# Lifespan context manager for startup and shutdown events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown events."""
@@ -77,6 +76,15 @@ async def lifespan(app: FastAPI):
         logger.info(f"🚀 FastAPI application started successfully on port {PORT}")
         logger.info("🏥 Health check endpoint: /health")
         logger.info("📊 Status endpoint: /status")
+        
+        # Log registered routes
+        logger.info("📋 Registered routes:")
+        for route in app.routes:
+            if hasattr(route, 'path') and hasattr(route, 'methods'):
+                methods = ', '.join(route.methods)
+                logger.info(f"  {methods} {route.path}")
+        logger.info(f"📊 Total routes registered: {len([r for r in app.routes if hasattr(r, 'path')])}")
+        
         logger.info("🎉 API Gateway is ready to accept requests!")
 
         yield
@@ -135,17 +143,17 @@ async def log_requests(request: Request, call_next):
 
         # Log response
         if response.status_code >= 400:
-            logger.warning(".3f")
+            logger.warning(f"↩️ [{request_id}] Response: {response.status_code} - Total time: {duration:.3f}s")
         elif response.status_code >= 300:
-            logger.info(".3f")
+            logger.info(f"↩️ [{request_id}] Response: {response.status_code} - Total time: {duration:.3f}s")
         else:
-            logger.info(".3f")
+            logger.info(f"↩️ [{request_id}] Response: {response.status_code} - Total time: {duration:.3f}s")
 
         return response
 
     except Exception as e:
         duration = time.time() - start_time
-        logger.error(".3f")
+        logger.error(f"💥 [{request_id}] Request failed after {duration:.3f}s: {e}")
         raise
 
 # CORS middleware
@@ -157,13 +165,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Log registered routes after all middleware and routes are added
-logger.info("📋 Registered routes:")
-for route in app.routes:
-    if hasattr(route, 'path') and hasattr(route, 'methods'):
-        methods = ', '.join(route.methods)
-        logger.info(f"  {methods} {route.path}")
-logger.info(f"📊 Total routes registered: {len([r for r in app.routes if hasattr(r, 'path')])}")
 
 # Service URLs from environment
 KNOWLEDGEBASE_INGESTION_URL = os.getenv(

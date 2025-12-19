@@ -29,4 +29,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD sh -c 'curl -f http://localhost:${KB_INGESTION_PORT:-${PORT:-8001}}/ready || exit 1'
 
 # Run the application with uvicorn - prefer KB_INGESTION_PORT, else PORT, else default 8001
-CMD sh -c 'uvicorn main:app --host 0.0.0.0 --port ${KB_INGESTION_PORT:-${PORT:-8001}}'
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${KB_INGESTION_PORT:-${PORT:-8001}}"]

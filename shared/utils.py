@@ -155,7 +155,7 @@ def log_system_metrics(service_name: str) -> None:
     svc_logger = logging.getLogger(service_name)
     try:
         memory = psutil.virtual_memory()
-        cpu = psutil.cpu_percent(interval=1)
+        cpu = psutil.cpu_percent(interval=None)
         svc_logger.info(f"📊 System Metrics for {service_name}:")
         svc_logger.info(f"  Memory: {memory.used / (1024 ** 2):.2f} MB / {memory.total / (1024 ** 2):.2f} MB ({memory.percent}%)")
         svc_logger.info(f"  CPU Usage: {cpu}%")

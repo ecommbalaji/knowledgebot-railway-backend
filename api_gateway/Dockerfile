@@ -61,4 +61,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD sh -c 'curl -f http://localhost:${API_GATEWAY_PORT:-${PORT:-8080}}/ready || exit 1'
 
 # Run the application with explicit module path and prefer API_GATEWAY_PORT, then PORT, then default 8080
-CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${API_GATEWAY_PORT:-${PORT:-8080}} --log-level info --access-log'
+CMD ["sh", "-c", "exec python -m uvicorn main:app --host 0.0.0.0 --port ${API_GATEWAY_PORT:-${PORT:-8080}} --log-level info --access-log"]
