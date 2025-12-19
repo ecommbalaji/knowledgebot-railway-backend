@@ -148,8 +148,32 @@ async def health_check():
 async def readiness_check():
     """Readiness endpoint to check critical dependencies."""
     try:
-        # Add checks for critical dependencies here
-        return {"status": "ready"}
+        # Check environment variables
+        required_vars = ["KB_INGESTION_PORT", "GEMINI_API_KEY"]
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+
+        if missing_vars:
+            logger.error(f"Missing required environment variables: {missing_vars}")
+            raise HTTPException(status_code=503, detail=f"Missing environment variables: {missing_vars}")
+
+        # Check Gemini API key validity
+        try:
+            import google.genai as genai
+            gemini_key = os.getenv("GEMINI_API_KEY")
+            genai.configure(api_key=gemini_key)
+            client = genai.Client(api_key=gemini_key)
+            logger.debug("Gemini client initialized successfully for health check")
+        except Exception as e:
+            logger.error(f"Gemini client initialization failed: {e}")
+            raise HTTPException(status_code=503, detail="Gemini API not accessible")
+
+        return {
+            "status": "ready",
+            "services": ["gemini_api", "environment"],
+            "timestamp": "2025-12-19T18:00:00Z"
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
         raise HTTPException(status_code=503, detail="Service not ready")

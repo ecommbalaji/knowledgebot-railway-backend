@@ -329,8 +329,49 @@ async def health_check():
 async def readiness_check():
     """Readiness endpoint to check critical dependencies."""
     try:
-        # Add checks for critical dependencies here
-        return {"status": "ready"}
+        # Check if required environment variables are set
+        required_vars = ["KNOWLEDGEBASE_INGESTION_URL", "WEBSITE_SCRAPING_URL", "CHATBOT_ORCHESTRATION_URL"]
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+
+        if missing_vars:
+            logger.error(f"Missing required environment variables: {missing_vars}")
+            raise HTTPException(status_code=503, detail=f"Missing environment variables: {missing_vars}")
+
+        # Quick connectivity check to downstream services (timeout after 2 seconds each)
+        service_checks = []
+        services_to_check = [
+            ("knowledgebase_ingestion", os.getenv("KNOWLEDGEBASE_INGESTION_URL")),
+            ("website_scraping", os.getenv("WEBSITE_SCRAPING_URL")),
+            ("chatbot_orchestration", os.getenv("CHATBOT_ORCHESTRATION_URL")),
+        ]
+
+        for service_name, service_url in services_to_check:
+            if service_url:
+                try:
+                    # Quick health check with short timeout
+                    async with httpx.AsyncClient(timeout=2.0) as client:
+                        response = await client.get(f"{service_url}/health")
+                        if response.status_code == 200:
+                            service_checks.append({"name": service_name, "status": "healthy"})
+                        else:
+                            service_checks.append({"name": service_name, "status": "unhealthy", "code": response.status_code})
+                except Exception as e:
+                    logger.warning(f"Service {service_name} health check failed: {e}")
+                    service_checks.append({"name": service_name, "status": "unhealthy", "error": str(e)})
+
+        # At least one service should be healthy for the gateway to be ready
+        healthy_services = [s for s in service_checks if s["status"] == "healthy"]
+        if not healthy_services:
+            logger.error("No downstream services are healthy")
+            raise HTTPException(status_code=503, detail="No downstream services available")
+
+        return {
+            "status": "ready",
+            "services": service_checks,
+            "timestamp": "2025-12-19T18:00:00Z"
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
         raise HTTPException(status_code=503, detail="Service not ready")

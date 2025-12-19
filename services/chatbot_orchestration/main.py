@@ -692,8 +692,39 @@ async def health_check():
 async def readiness_check():
     """Readiness endpoint to check critical dependencies."""
     try:
-        # Add checks for critical dependencies here
-        return {"status": "ready"}
+        # Check database connections
+        db_checks = []
+        if railway_db:
+            try:
+                # Simple query to test connection
+                await railway_db.fetchval("SELECT 1")
+                db_checks.append({"name": "railway_db", "status": "healthy"})
+            except Exception as e:
+                logger.warning(f"Railway DB health check failed: {e}")
+                db_checks.append({"name": "railway_db", "status": "unhealthy", "error": str(e)})
+
+        if neon_db:
+            try:
+                # Simple query to test connection
+                await neon_db.fetchval("SELECT 1")
+                db_checks.append({"name": "neon_db", "status": "healthy"})
+            except Exception as e:
+                logger.warning(f"Neon DB health check failed: {e}")
+                db_checks.append({"name": "neon_db", "status": "unhealthy", "error": str(e)})
+
+        # Check if at least one database is healthy
+        healthy_dbs = [db for db in db_checks if db["status"] == "healthy"]
+        if not healthy_dbs:
+            logger.error("No healthy database connections found")
+            raise HTTPException(status_code=503, detail="No database connections available")
+
+        return {
+            "status": "ready",
+            "databases": db_checks,
+            "timestamp": "2025-12-19T18:00:00Z"
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
         raise HTTPException(status_code=503, detail="Service not ready")
