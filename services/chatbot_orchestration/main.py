@@ -1,5 +1,5 @@
 """Chatbot Orchestration Service - Pydantic AI Agent with intelligent data source routing."""
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Annotated
@@ -64,7 +64,7 @@ try:
 except Exception:
     logger.debug("Could not adjust sys.path for shared imports")
 
-from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics, log_endpoint_request
 setup_global_exception_logging("chatbot_orchestration")
 
 # Validate required environment variables for this service
@@ -722,14 +722,16 @@ def create_agent(file_context: Optional[List[SearchResult]] = None) -> Optional[
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(request: Request):
     """Health check endpoint."""
+    log_endpoint_request("chatbot_orchestration", "health", request)
     return {"status": "healthy", "service": "chatbot_orchestration"}
 
 
 @app.get("/ready")
-async def readiness_check():
+async def readiness_check(request: Request):
     """Readiness endpoint to check critical dependencies."""
+    log_endpoint_request("chatbot_orchestration", "ready", request)
     log_system_metrics("chatbot_orchestration")
     try:
         # For serverless: Check configuration rather than actual connections
@@ -1050,7 +1052,7 @@ async def review_response(session_id: str, review: HumanReviewRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    # Railway sets PORT, fallback to 8003
-    # Use service-specific port variable, fallback to Railway PORT, then default
-    port = int(os.getenv("CHATBOT_ORCH_PORT", "8003"))
+    # Port selection order: Service-specific -> Railway PORT -> Default 8003
+    port = int(os.getenv("CHATBOT_ORCH_PORT", os.getenv("PORT", "8003")))
+    logger.info(f"🚀 Starting chatbot_orchestration service on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)

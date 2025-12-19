@@ -161,3 +161,16 @@ def log_system_metrics(service_name: str) -> None:
         svc_logger.info(f"  CPU Usage: {cpu}%")
     except Exception as e:
         svc_logger.error(f"Error logging system metrics: {e}")
+
+
+def log_endpoint_request(service_name: str, endpoint_type: str, request: Request) -> None:
+    """Log the full URL of an endpoint request for health and readiness checks.
+
+    Args:
+        service_name: Name of the service.
+        endpoint_type: Type of endpoint (e.g., 'health', 'ready').
+        request: FastAPI Request object.
+    """
+    svc_logger = logging.getLogger(service_name)
+    url = str(request.url)
+    svc_logger.info(f"🔍 {endpoint_type.capitalize()} check invoked: {url}")

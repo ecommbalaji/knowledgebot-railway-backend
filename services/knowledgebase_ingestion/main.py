@@ -1,5 +1,5 @@
 """Knowledgebase Ingestion Service - Handles document uploads, R2 storage, and Gemini FileSearch."""
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -33,7 +33,7 @@ try:
 except Exception:
     logger.debug("Could not adjust sys.path for shared imports")
 
-from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics, log_endpoint_request
 setup_global_exception_logging("knowledgebase_ingestion")
 
 # Validate required environment variables for this service
@@ -143,14 +143,16 @@ class FilesResponse(BaseModel):
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(request: Request):
     """Health check endpoint."""
+    log_endpoint_request("knowledgebase_ingestion", "health", request)
     return {"status": "healthy", "service": "knowledgebase_ingestion"}
 
 
 @app.get("/ready")
-async def readiness_check():
+async def readiness_check(request: Request):
     """Readiness endpoint to check critical dependencies."""
+    log_endpoint_request("knowledgebase_ingestion", "ready", request)
     log_system_metrics("knowledgebase_ingestion")
     try:
         # Check environment variables
@@ -721,7 +723,8 @@ async def delete_file(file_name: str):
 
 if __name__ == "__main__":
     import uvicorn
-    # Railway sets PORT, fallback to 8001
-    # Use service-specific port variable, fallback to Railway PORT, then default
-    port = int(os.getenv("KB_INGESTION_PORT", "8001"))
+    # Port selection order: Service-specific -> Railway PORT -> Default 8001
+    port = int(os.getenv("KB_INGESTION_PORT", os.getenv("PORT", "8001")))
+    logger.info(f"🚀 Starting knowledgebase_ingestion service on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
+```

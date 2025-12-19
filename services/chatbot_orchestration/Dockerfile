@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libxml2-dev \
     libxslt1-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -23,8 +24,8 @@ WORKDIR /app/services/chatbot_orchestration
 ENV PYTHONPATH="/app"
 
 # Update health check to use the `/ready` endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=5 \
-    CMD sh -c 'curl -f http://localhost:${CHATBOT_ORCH_PORT:-8003}/ready || exit 1'
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD sh -c 'curl -f http://localhost:${CHATBOT_ORCH_PORT:-${PORT:-8003}}/ready || exit 1'
 
-# Run the application with uvicorn - prefer CHATBOT_ORCH_PORT, else PORT, else default
-CMD sh -c 'uvicorn main:app --host 0.0.0.0 --port ${CHATBOT_ORCH_PORT:-8003}'
+# Run the application with uvicorn - prefer CHATBOT_ORCH_PORT, else PORT, else default 8003
+CMD sh -c 'uvicorn main:app --host 0.0.0.0 --port ${CHATBOT_ORCH_PORT:-${PORT:-8003}}'

@@ -1,5 +1,5 @@
 """Website Scraping Service - Handles website scraping using Crawl4AI and Gemini FileSearch."""
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from typing import Optional, Dict, Any
@@ -28,7 +28,7 @@ try:
 except Exception:
     logger.debug("Could not adjust sys.path for shared imports")
 
-from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics
+from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics, log_endpoint_request
 setup_global_exception_logging("website_scraping")
 
 # Validate required environment variables for this service
@@ -110,16 +110,16 @@ class ScrapeResponse(BaseModel):
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(request: Request):
     """Health check endpoint."""
+    log_endpoint_request("website_scraping", "health", request)
     return {"status": "healthy", "service": "website_scraping"}
 
 
-
-
 @app.get("/ready")
-async def readiness_check():
+async def readiness_check(request: Request):
     """Readiness endpoint to check critical dependencies."""
+    log_endpoint_request("website_scraping", "ready", request)
     log_system_metrics("website_scraping")
     try:
         # Check Gemini API key
@@ -283,7 +283,7 @@ async def scrape_website(request: ScrapeRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    # Railway sets PORT, fallback to 8002
-    # Use service-specific port variable, fallback to Railway PORT, then default
-    port = int(os.getenv("WEBSITE_SCRAPING_PORT", "8002"))
+    # Port selection order: Service-specific -> Railway PORT -> Default 8002
+    port = int(os.getenv("WEBSITE_SCRAPING_PORT", os.getenv("PORT", "8002")))
+    logger.info(f"🚀 Starting website_scraping service on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
