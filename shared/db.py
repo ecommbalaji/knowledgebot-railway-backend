@@ -35,6 +35,7 @@ class Database:
             logger.info("Database connection pool created successfully")
         except Exception as e:
             logger.error(f"Failed to create database connection pool: {e}")
+            logger.debug("Connection URL: %s", self.connection_url)
             raise
     
     async def disconnect(self):
