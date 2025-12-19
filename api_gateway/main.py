@@ -1,27 +1,19 @@
-"""API Gateway - Central entry point for all requests."""
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import httpx
-import logging
-import time
-from typing import Optional, Dict, Any, List
-from pydantic import BaseModel
+# --- 🔍 STARTUP DIAGNOSTIC ---
 import os
 import sys
-from dotenv import load_dotenv
-from contextlib import asynccontextmanager
+import logging
 
-# Load environment variables
-load_dotenv()
-
-# Configure detailed logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stdout  # Use stdout only to avoid duplication
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Log port and environment basic state
+logger.info("🔍 --- API Gateway Startup Diagnostics ---")
+logger.info(f"🐍 Python: {sys.version}")
+logger.info(f"📂 Current Dir: {os.getcwd()}")
+logger.info(f"🌐 API_GATEWAY_PORT: {os.getenv('API_GATEWAY_PORT')}")
+logger.info(f"🌐 PORT (Railway): {os.getenv('PORT')}")
+logger.info(f"🔗 CHATBOT_ORCHESTRATION_URL: {os.getenv('CHATBOT_ORCHESTRATION_URL')}")
+logger.info(f"🔍 --------------------------------------")
 
 # Debug logging to check if script starts
 logger.info("🔍 API Gateway script starting...")
@@ -143,9 +135,9 @@ async def log_requests(request: Request, call_next):
 
         # Log response
         if response.status_code >= 400:
-            logger.warning(f"↩️ [{request_id}] Response: {response.status_code} - Total time: {duration:.3f}s")
-        elif response.status_code >= 300:
-            logger.info(f"↩️ [{request_id}] Response: {response.status_code} - Total time: {duration:.3f}s")
+            logger.warning(f"↩️ [{request_id}] Response: {response.status_code} - Path: {request.url.path} - Total time: {duration:.3f}s")
+            if response.status_code == 404:
+                logger.error(f"❌ 404 DETECTED on path: {request.url.path}")
         else:
             logger.info(f"↩️ [{request_id}] Response: {response.status_code} - Total time: {duration:.3f}s")
 
@@ -458,6 +450,18 @@ async def system_status():
     }
 
 
+@app.get("/gateway-check")
+async def gateway_check():
+    """Direct diagnostic route to verify Gateway is responding."""
+    return {
+        "status": "online",
+        "message": "API Gateway is responding directly",
+        "timestamp": time.time(),
+        "env_port": os.getenv("PORT"),
+        "orchestration_url": os.getenv("CHATBOT_ORCHESTRATION_URL")
+    }
+
+
 # API Gateway Routing Endpoints
 
 @app.post("/api/v1/chat")
@@ -475,9 +479,12 @@ async def chat_endpoint(request: Request):
         ]
         headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers}
 
+        target_url = f"{CHATBOT_ORCHESTRATION_URL}/chat"
+        logger.info(f"🧪 Forwarding chat request to: {target_url}")
+
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{CHATBOT_ORCHESTRATION_URL}/chat",
+                target_url,
                 content=body,
                 headers=headers,
                 timeout=30.0
