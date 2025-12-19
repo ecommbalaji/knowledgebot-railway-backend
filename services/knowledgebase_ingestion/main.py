@@ -22,8 +22,13 @@ from shared.r2_storage import R2Storage
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("knowledgebase_ingestion")
 
 # Ensure shared utilities are importable and enable global exception logging
 import sys
@@ -349,6 +354,7 @@ async def upload_document(
     """
     if not genai_client:
         from shared.utils import dependency_unavailable_error
+        logger.error(f"Gemini not configured")
         raise dependency_unavailable_error("gemini", "client not configured")
 
     # Initialize variables for cleanup and tracking

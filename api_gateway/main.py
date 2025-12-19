@@ -16,8 +16,12 @@ from pydantic import BaseModel
 load_dotenv()
 
 # Configure basic logging for early diagnostics
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("api_gateway")
 
 # Log port and environment basic state
 logger.info("🔍 --- API Gateway Startup Diagnostics ---")

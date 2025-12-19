@@ -2,6 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="/app"
+
 # Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -19,9 +23,6 @@ COPY shared ./shared/
 
 # Set working directory
 WORKDIR /app/services/knowledgebase_ingestion
-
-# Set the PYTHONPATH environment variable to include the /app directory
-ENV PYTHONPATH="/app"
 
 # Update health check to use the `/health` endpoint
 # Increased start-period and retries to reduce premature restarts

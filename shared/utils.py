@@ -6,6 +6,7 @@ from fastapi import HTTPException, FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.status import HTTP_503_SERVICE_UNAVAILABLE
 import sys
+import os
 import asyncio
 import signal
 import traceback
@@ -117,9 +118,21 @@ def setup_global_exception_logging(service_name: str) -> None:
                 svc_logger.exception("faulthandler failed to dump traceback")
         except Exception:
             svc_logger.exception("Error inside signal handler")
+        finally:
+            # Chain to the original handler to ensure graceful shutdown
+            original_handler = original_handlers.get(signum)
+            if callable(original_handler):
+                original_handler(signum, frame)
+            elif original_handler == signal.SIG_DFL:
+                signal.signal(signum, signal.SIG_DFL)
+                os.kill(os.getpid(), signum)
+            elif original_handler == signal.SIG_IGN:
+                pass
 
+    original_handlers = {}
     for s in (signal.SIGTERM, signal.SIGINT):
         try:
+            original_handlers[s] = signal.getsignal(s)
             signal.signal(s, _signal_handler)
         except Exception:
             # Some environments (Windows, restricted containers) may not allow setting signals
