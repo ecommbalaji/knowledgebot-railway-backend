@@ -113,6 +113,9 @@ class R2Storage:
             if metadata:
                 extra_args['Metadata'] = {str(k): str(v) for k, v in metadata.items()}
             
+            logger.debug(f"Uploading file to R2: bucket={self.bucket_name}, key={file_key}, content_type={content_type}, metadata={metadata}")
+            logger.debug(f"File content size: {len(file_content)} bytes")
+
             # Upload to R2 (using sync boto3 in async context)
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
@@ -134,11 +137,11 @@ class R2Storage:
                 # Return None for URL to indicate private access only
                 file_url = None
 
-            logger.info(f"File uploaded to R2: {file_key}")
+            logger.info(f"File uploaded successfully: bucket={self.bucket_name}, key={file_key}")
             if file_url:
-                logger.info(f"Public URL available: {file_url}")
+                logger.info(f"Public URL: {file_url}")
             else:
-                logger.info("Private bucket - file accessible via signed URLs or API only")
+                logger.info("File is private and does not have a public URL.")
 
             return {
                 'key': file_key,
@@ -149,10 +152,10 @@ class R2Storage:
             }
             
         except ClientError as e:
-            logger.error(f"R2 upload error: {e}")
+            logger.error(f"R2 upload error: bucket={self.bucket_name}, key={file_key}, error={e}")
             raise Exception(f"Failed to upload file to R2: {str(e)}")
         except Exception as e:
-            logger.error(f"Unexpected error uploading to R2: {e}")
+            logger.error(f"Unexpected error during R2 upload: bucket={self.bucket_name}, key={file_key}, error={e}")
             raise
     
     async def delete_file(self, file_key: str) -> bool:

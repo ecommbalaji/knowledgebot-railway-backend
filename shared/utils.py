@@ -10,10 +10,12 @@ import asyncio
 import signal
 import traceback
 import faulthandler
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
 
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def make_service_request(
     method: str,
     url: str,

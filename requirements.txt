@@ -29,6 +29,7 @@ python-multipart>=0.0.9
 # Cloudflare R2 (S3-compatible)
 # Use version compatible with pydantic-ai-slim bedrock extra (requires boto3>=1.40.14)
 boto3>=1.40.14
+botocore>=1.40.14
 
 # PostgreSQL
 asyncpg>=0.29.0
@@ -36,3 +37,6 @@ psycopg2-binary>=2.9.0
 
 # Internet search (optional - for web search capability)
 tavily-python>=0.3.0
+
+# Retry logic for HTTP requests
+tenacity>=8.2.2
