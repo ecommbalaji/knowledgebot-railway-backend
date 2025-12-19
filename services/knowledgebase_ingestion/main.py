@@ -693,5 +693,5 @@ async def delete_file(file_name: str):
 if __name__ == "__main__":
     import uvicorn
     # Railway sets PORT, fallback to 8001
-    port = int(os.getenv("PORT", "8001"))
+    port = int(os.getenv("KB_INGESTION_PORT", "8001"))
     uvicorn.run(app, host="0.0.0.0", port=port)
