@@ -24,6 +24,33 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from shared.config import settings
 from shared.db import init_railway_db, init_neon_db, railway_db, neon_db
 
+# Lazy database initialization for serverless optimization
+async def get_railway_db():
+    """Get Railway database connection, initializing if needed."""
+    global railway_db
+    if railway_db is None and settings.railway_postgres_url:
+        try:
+            logger.info("🔄 Lazy initializing Railway PostgreSQL database...")
+            await init_railway_db(settings.railway_postgres_url)
+            logger.info("✅ Railway PostgreSQL database initialized")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Railway PostgreSQL database: {e}")
+            raise
+    return railway_db
+
+async def get_neon_db():
+    """Get Neon database connection, initializing if needed."""
+    global neon_db
+    if neon_db is None and settings.neon_db_url:
+        try:
+            logger.info("🔄 Lazy initializing Neon database...")
+            await init_neon_db(settings.neon_db_url)
+            logger.info("✅ Neon database initialized")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Neon database: {e}")
+            raise
+    return neon_db
+
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
@@ -45,48 +72,33 @@ setup_global_exception_logging("chatbot_orchestration")
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown events."""
     logger.info("🔄 Chatbot orchestration lifespan starting...")
+
+    # For serverless optimization: Skip heavy DB initialization during startup
+    # Databases will be initialized lazily on first request to reduce cold start time
+    logger.info("🚀 Chatbot orchestration service started successfully (lazy DB init)")
+    logger.info("🏥 Health check endpoint: /health")
+    logger.info("💬 Chat endpoint: POST /chat")
+    logger.info("📊 Sessions endpoint: GET /sessions")
+
+    yield
+
+    # Shutdown - Close database connections if they exist
+    logger.info("🛑 Shutting down chatbot orchestration service...")
     try:
-        # Startup - Initialize database connections with timeout
-        logger.info("🗄️  Initializing databases...")
-        import asyncio
-
-        # Initialize databases with individual timeouts
-        db_tasks = []
-        if settings.railway_postgres_url:
-            db_tasks.append(("Railway PostgreSQL", init_railway_db(settings.railway_postgres_url)))
-        if settings.neon_db_url:
-            db_tasks.append(("Neon DB", init_neon_db(settings.neon_db_url)))
-
-        for db_name, init_task in db_tasks:
-            try:
-                # Timeout each DB init to 10 seconds
-                await asyncio.wait_for(init_task, timeout=10.0)
-                logger.info(f"✅ {db_name} database initialized")
-            except asyncio.TimeoutError:
-                logger.warning(f"⏰ {db_name} initialization timed out after 10 seconds")
-            except Exception as e:
-                logger.error(f"❌ Failed to initialize {db_name}: {e}")
-
-        logger.info("🚀 Chatbot orchestration service started successfully")
-        logger.info("🏥 Health check endpoint: /health")
-        logger.info("💬 Chat endpoint: POST /chat")
-        logger.info("📊 Sessions endpoint: GET /sessions")
-
-        yield
-
-        # Shutdown - Close database connections
-        logger.info("🛑 Shutting down chatbot orchestration service...")
-        if railway_db:
+        if railway_db and not railway_db.is_closed:
             await railway_db.disconnect()
-        if neon_db:
-            await neon_db.disconnect()
-        logger.info("✅ Chatbot orchestration service shutdown complete")
+            logger.info("✅ Railway PostgreSQL connection closed")
     except Exception as e:
-        logger.error(f"❌ Critical error in lifespan handler: {e}")
-        logger.error(f"Error type: {type(e).__name__}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise
+        logger.warning(f"Error closing Railway DB: {e}")
+
+    try:
+        if neon_db and not neon_db.is_closed:
+            await neon_db.disconnect()
+            logger.info("✅ Neon DB connection closed")
+    except Exception as e:
+        logger.warning(f"Error closing Neon DB: {e}")
+
+    logger.info("✅ Chatbot orchestration service shutdown complete")
 
 app = FastAPI(
     title="Chatbot Orchestration Service",
@@ -220,8 +232,12 @@ async def query_railway_postgres(
     IMPORTANT: Never expose PII (personally identifiable information) like emails, names, or personal data.
     Only return aggregated statistics, file metadata, and anonymized information.
     """
-    if not railway_db:
-        return "Railway PostgreSQL database is not configured."
+    try:
+        db = await get_railway_db()
+        if not db:
+            return "Railway PostgreSQL database is not configured."
+    except Exception as e:
+        return f"Failed to initialize Railway PostgreSQL database: {e}"
     
     try:
         # Parse the query and construct appropriate SQL
@@ -312,8 +328,12 @@ async def query_neon_db(
     
     IMPORTANT: Never expose PII. Only return aggregated business data, product information, and anonymized statistics.
     """
-    if not neon_db:
-        return "Neon DB business database is not configured."
+    try:
+        db = await get_neon_db()
+        if not db:
+            return "Neon DB business database is not configured."
+    except Exception as e:
+        return f"Failed to initialize Neon DB business database: {e}"
     
     try:
         query_lower = query.lower()
@@ -692,39 +712,40 @@ async def health_check():
 async def readiness_check():
     """Readiness endpoint to check critical dependencies."""
     try:
-        # Check database connections
+        # For serverless: Check configuration rather than actual connections
+        # Databases will be initialized lazily on first use
         db_checks = []
-        if railway_db:
-            try:
-                # Simple query to test connection
-                await railway_db.fetchval("SELECT 1")
-                db_checks.append({"name": "railway_db", "status": "healthy"})
-            except Exception as e:
-                logger.warning(f"Railway DB health check failed: {e}")
-                db_checks.append({"name": "railway_db", "status": "unhealthy", "error": str(e)})
 
-        if neon_db:
-            try:
-                # Simple query to test connection
-                await neon_db.fetchval("SELECT 1")
-                db_checks.append({"name": "neon_db", "status": "healthy"})
-            except Exception as e:
-                logger.warning(f"Neon DB health check failed: {e}")
-                db_checks.append({"name": "neon_db", "status": "unhealthy", "error": str(e)})
+        # Check if database URLs are configured (lazy init will handle actual connections)
+        if settings.railway_postgres_url:
+            db_checks.append({"name": "railway_db", "status": "configured", "lazy_init": True})
+        else:
+            db_checks.append({"name": "railway_db", "status": "not_configured"})
 
-        # Check if at least one database is healthy
-        healthy_dbs = [db for db in db_checks if db["status"] == "healthy"]
-        if not healthy_dbs:
-            logger.error("No healthy database connections found")
-            raise HTTPException(status_code=503, detail="No database connections available")
+        if settings.neon_db_url:
+            db_checks.append({"name": "neon_db", "status": "configured", "lazy_init": True})
+        else:
+            db_checks.append({"name": "neon_db", "status": "not_configured"})
+
+        # Check AI components (already initialized at module level)
+        ai_checks = []
+        if GEMINI_API_KEY and genai_client:
+            ai_checks.append({"name": "gemini_api", "status": "ready"})
+        else:
+            ai_checks.append({"name": "gemini_api", "status": "not_configured"})
+
+        if OPENAI_API_KEY:
+            ai_checks.append({"name": "openai_api", "status": "configured"})
+        else:
+            ai_checks.append({"name": "openai_api", "status": "not_configured"})
 
         return {
             "status": "ready",
             "databases": db_checks,
+            "ai_components": ai_checks,
+            "serverless_optimized": True,
             "timestamp": "2025-12-19T18:00:00Z"
         }
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
         raise HTTPException(status_code=503, detail="Service not ready")
