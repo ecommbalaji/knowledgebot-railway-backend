@@ -1010,5 +1010,6 @@ async def review_response(session_id: str, review: HumanReviewRequest):
 if __name__ == "__main__":
     import uvicorn
     # Railway sets PORT, fallback to 8003
-    port = int(os.getenv("CHATBOT_ORCH_PORT", "8003"))
+    # Railway sets PORT environment variable - use it, fallback to service-specific port, then default
+    port = int(os.getenv("PORT", os.getenv("CHATBOT_ORCH_PORT", "8003")))
     uvicorn.run(app, host="0.0.0.0", port=port)
