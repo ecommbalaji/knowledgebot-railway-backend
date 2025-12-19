@@ -210,13 +210,20 @@ class ListFilesResponse(BaseModel):
 # Website Scraping Models
 class ScrapeRequest(BaseModel):
     url: str
-    max_depth: int = 1
-    max_pages: int = 10
+    max_depth: Optional[int] = 1
+    max_pages: Optional[int] = 10
+    include_patterns: Optional[List[str]] = None
+    exclude_patterns: Optional[List[str]] = None
+    wait_for: Optional[str] = None
+    js_code: Optional[str] = None
+    screenshot: Optional[bool] = False
 
 class ScrapeResponse(BaseModel):
+    success: bool
     message: str
-    total_pages_scraped: int
-    total_files_uploaded: int
+    file_name: Optional[str] = None
+    file_info: Optional[Dict[str, Any]] = None
+    scraped_urls: Optional[List[str]] = None
 
 # Chatbot Models
 class ChatRequest(BaseModel):
@@ -225,13 +232,27 @@ class ChatRequest(BaseModel):
     use_rag: bool = True
     max_results: int = 5
 
+class SearchResult(BaseModel):
+    file_name: str
+    content: str
+    relevance_score: Optional[float] = None
+
 class ChatResponse(BaseModel):
+    answer: str
+    sources: List[SearchResult] = []
+    confidence: float
+    data_sources_used: List[str] = []
+
+class ChatSessionResponse(BaseModel):
     session_id: str
-    response: str
+    message: str
+    response: ChatResponse
+    usage: Optional[Dict[str, Any]] = None
+    timestamp: str
 
 class SessionSummary(BaseModel):
     session_id: str
-    start_time: str
+    created_at: str
     message_count: int
 
 class ListSessionsResponse(BaseModel):
@@ -479,11 +500,10 @@ async def gateway_check():
 # API Gateway Routing Endpoints
 
 @app.post("/api/v1/chat")
-async def chat_endpoint(request: Request):
+async def chat_endpoint(chat_request: ChatRequest, request: Request):
     """Route chat requests to chatbot orchestration service."""
     try:
-        # Get the request body
-        body = await request.body()
+        # Get the request headers
         headers = dict(request.headers)
 
         # Remove hop-by-hop headers that shouldn't be forwarded
@@ -499,7 +519,7 @@ async def chat_endpoint(request: Request):
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 target_url,
-                content=body,
+                json=chat_request.model_dump(),
                 headers=headers,
                 timeout=30.0
             )
@@ -509,6 +529,36 @@ async def chat_endpoint(request: Request):
             )
     except Exception as e:
         logger.error(f"Error routing chat request: {e}")
+        raise HTTPException(status_code=500, detail=f"Chat service error: {str(e)}")
+
+
+@app.get("/api/v1/sessions", response_model=ListSessionsResponse)
+async def list_sessions_endpoint(request: Request):
+    """Route list sessions requests to chatbot orchestration service."""
+    try:
+        headers = dict(request.headers)
+        target_url = f"{CHATBOT_ORCHESTRATION_URL}/sessions"
+        
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(target_url, headers=headers, timeout=10.0)
+            return JSONResponse(status_code=resp.status_code, content=resp.json())
+    except Exception as e:
+        logger.error(f"Error routing list sessions request: {e}")
+        raise HTTPException(status_code=500, detail=f"Chat service error: {str(e)}")
+
+
+@app.delete("/api/v1/sessions/{session_id}", response_model=DeleteSessionResponse)
+async def delete_session_endpoint(session_id: str, request: Request):
+    """Route delete session requests to chatbot orchestration service."""
+    try:
+        headers = dict(request.headers)
+        target_url = f"{CHATBOT_ORCHESTRATION_URL}/sessions/{session_id}"
+        
+        async with httpx.AsyncClient() as client:
+            resp = await client.delete(target_url, headers=headers, timeout=10.0)
+            return JSONResponse(status_code=resp.status_code, content=resp.json())
+    except Exception as e:
+        logger.error(f"Error routing delete session request: {e}")
         raise HTTPException(status_code=500, detail=f"Chat service error: {str(e)}")
 
 
@@ -715,11 +765,10 @@ async def knowledgebase_file_download_endpoint(
 
 
 @app.post("/api/v1/scrape")
-async def scrape_endpoint(request: Request):
+async def scrape_endpoint(scrape_request: ScrapeRequest, request: Request):
     """Route scraping requests to website scraping service."""
     try:
-        # Get the request body
-        body = await request.body()
+        # Get the request headers
         headers = dict(request.headers)
 
         # Remove hop-by-hop headers
@@ -732,7 +781,7 @@ async def scrape_endpoint(request: Request):
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{WEBSITE_SCRAPING_URL}/scrape",
-                content=body,
+                json=scrape_request.model_dump(),
                 headers=headers,
                 timeout=60.0  # Longer timeout for scraping
             )
