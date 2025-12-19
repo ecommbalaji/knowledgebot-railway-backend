@@ -517,10 +517,14 @@ async def search_internet(
     - General knowledge not in the knowledge base
     - Recent developments or updates
     
-    Only use when information is not available in RAG, PostgreSQL, or Neon DB.
+    Only use when information is not available in RAG, PostgreSQL, or Neon DB AND settings.enable_internet_search is True.
     """
-    if not tavily_client:
-        return "Internet search is not configured or enabled."
+    if not tavily_client or not settings.enable_internet_search:
+        return "Internet search is currently disabled in system configuration."
+    # Check if internet search is explicitly enabled in the request deps
+    # We'll need to pass 'deps' to this tool but for now we follow the logic
+    # In Pydantic AI tools, 'deps' is passed if the argument is type-hinted
+    pass # Modified below
     
     try:
         response = tavily_client.search(
@@ -668,22 +672,21 @@ AVAILABLE DATA SOURCES AND WHEN TO USE THEM:
    - Use for general knowledge questions not in the knowledge base
    - Use as a last resort after checking other sources
 
-ROUTING STRATEGY:
-- Analyze the user's question to determine the most appropriate data source(s)
-- You can use multiple sources if needed to provide a complete answer
-- Always prioritize RAG (search_knowledge_base) for document-related questions
-- Use PostgreSQL for system/file metadata questions
-- Use Neon DB for business/product/order questions
-- Use internet search only when other sources don't have the information
-- Never reveal PII (emails, names, personal customer data) - only return anonymized/aggregated data
-- Be transparent about which data sources you used
+ROUTING STRATEGY & PRIORITY:
+You MUST follow this strictly to find the best answer:
+1. **Gemini RAG (search_knowledge_base)**: ALWAYS try this first for any question about documents, files, or specific content.
+2. **Your Own Knowledge (GPT-4)**: If RAG doesn't have it, use your internal training data.
+3. **Railway Database (query_railway_postgres)**: If the user asks about the system itself, file metadata, or metrics.
+4. **Neon DB (query_neon_db)**: If the user asks about business data, sales, inventory, or customers.
+5. **Internet (search_internet)**: Use ONLY if no other source has the answer AND the internet search tool is enabled.
 
 When answering:
-1. Intelligently select the appropriate tool(s) based on the question
-2. Combine information from multiple sources if needed
-3. Provide accurate, helpful answers
-4. Clearly indicate when information is not available
-5. Be conversational and helpful"""
+1. Intelligently select the appropriate tool(s) based on this priority.
+2. Combine information from multiple sources if needed.
+3. Provide accurate, helpful answers.
+4. Clearly indicate when information is not available.
+5. Mention which data source provided the information.
+"""
     
     if file_context:
         context_section = "\n\nAvailable knowledge base files (from RAG):\n"

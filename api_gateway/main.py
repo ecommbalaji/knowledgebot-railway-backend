@@ -497,6 +497,25 @@ async def gateway_check():
     }
 
 
+@app.post("/chat")
+async def chatbot_bypass_diagnostic(request: Request):
+    """
+    NUCLEAR DIAGNOSTIC BYPASS: If this route is hit, it means Railway has deployed
+    the API Gateway container where the Chatbot service should be.
+    """
+    logger.error("🛑 CRITICAL: Service Confusion Detected!")
+    logger.error("This container is running API_GATEWAY code but was hit on the /chat route.")
+    return JSONResponse(
+        status_code=418,
+        content={
+            "error": "Service Confusion Detected",
+            "identity": SERVICE_IDENTITY,
+            "message": "This is the API Gateway, but you called /chat (the Chatbot route). This proves Railway is misrouting your deployment.",
+            "suggestion": "Check Railway UI -> Chatbot Service -> Settings -> Dockerfile Path. Ensure it points to 'services/chatbot_orchestration/Dockerfile'."
+        }
+    )
+
+
 # API Gateway Routing Endpoints
 
 @app.post("/api/v1/chat")
@@ -506,12 +525,18 @@ async def chat_endpoint(chat_request: ChatRequest, request: Request):
         # Get the request headers
         headers = dict(request.headers)
 
-        # Remove hop-by-hop headers that shouldn't be forwarded
+        # Remove hop-by-hop headers and problematic headers like Host/Content-Length
         hop_by_hop_headers = [
             'connection', 'keep-alive', 'proxy-authenticate',
             'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
         ]
         headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers}
+        
+        # Explicitly remove Host and Content-Length so httpx sets them correctly
+        headers.pop('host', None)
+        headers.pop('Host', None)
+        headers.pop('content-length', None)
+        headers.pop('Content-Length', None)
 
         target_url = f"{CHATBOT_ORCHESTRATION_URL}/chat"
         logger.info(f"🧪 Forwarding chat request to: {target_url}")
@@ -537,6 +562,13 @@ async def list_sessions_endpoint(request: Request):
     """Route list sessions requests to chatbot orchestration service."""
     try:
         headers = dict(request.headers)
+        # Remove hop-by-hop and problematic headers
+        hop_by_hop_headers = [
+            'connection', 'keep-alive', 'proxy-authenticate',
+            'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
+        ]
+        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
+        
         target_url = f"{CHATBOT_ORCHESTRATION_URL}/sessions"
         
         async with httpx.AsyncClient() as client:
@@ -552,6 +584,13 @@ async def delete_session_endpoint(session_id: str, request: Request):
     """Route delete session requests to chatbot orchestration service."""
     try:
         headers = dict(request.headers)
+        # Remove hop-by-hop and problematic headers
+        hop_by_hop_headers = [
+            'connection', 'keep-alive', 'proxy-authenticate',
+            'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
+        ]
+        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
+        
         target_url = f"{CHATBOT_ORCHESTRATION_URL}/sessions/{session_id}"
         
         async with httpx.AsyncClient() as client:
@@ -595,7 +634,7 @@ async def knowledgebase_upload_endpoint(
             'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
         ]
         headers.update({k: v for k, v in request_headers.items()
-                       if k.lower() not in hop_by_hop_headers and k.lower() not in ['content-type', 'content-length']})
+                       if k.lower() not in hop_by_hop_headers and k.lower() not in ['content-type', 'content-length', 'host']})
 
         logger.info(f"📤 Forwarding upload to: {KNOWLEDGEBASE_INGESTION_URL}/upload")
 
@@ -635,12 +674,12 @@ async def knowledgebase_files_endpoint(request: Request):
             url += f"?{query_params}"
 
         headers = dict(request.headers)
-        # Remove hop-by-hop headers
+        # Remove hop-by-hop and problematic headers
         hop_by_hop_headers = [
             'connection', 'keep-alive', 'proxy-authenticate',
             'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
         ]
-        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers}
+        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
 
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, headers=headers, timeout=30.0)
@@ -673,12 +712,12 @@ async def knowledgebase_files_metadata_endpoint(
             url += "?" + "&".join(query_params)
 
         headers = dict(request.headers)
-        # Remove hop-by-hop headers
+        # Remove hop-by-hop and problematic headers
         hop_by_hop_headers = [
             'connection', 'keep-alive', 'proxy-authenticate',
             'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
         ]
-        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers}
+        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
 
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, headers=headers, timeout=30.0)
@@ -704,12 +743,12 @@ async def knowledgebase_file_signed_url_endpoint(
             url += f"?expiration={expiration}"
 
         headers = dict(request.headers)
-        # Remove hop-by-hop headers
+        # Remove hop-by-hop and problematic headers
         hop_by_hop_headers = [
             'connection', 'keep-alive', 'proxy-authenticate',
             'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
         ]
-        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers}
+        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
 
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, headers=headers, timeout=30.0)
@@ -735,12 +774,12 @@ async def knowledgebase_file_download_endpoint(
             url += f"?expiration={expiration}"
 
         headers = dict(request.headers)
-        # Remove hop-by-hop headers
+        # Remove hop-by-hop headers and problematic ones
         hop_by_hop_headers = [
             'connection', 'keep-alive', 'proxy-authenticate',
             'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
         ]
-        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers}
+        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
 
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, headers=headers, timeout=30.0, follow_redirects=False)
@@ -771,12 +810,12 @@ async def scrape_endpoint(scrape_request: ScrapeRequest, request: Request):
         # Get the request headers
         headers = dict(request.headers)
 
-        # Remove hop-by-hop headers
+        # Remove hop-by-hop headers and problematic headers like Host/Content-Length
         hop_by_hop_headers = [
             'connection', 'keep-alive', 'proxy-authenticate',
             'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
         ]
-        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers}
+        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(
