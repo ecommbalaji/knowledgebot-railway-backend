@@ -337,7 +337,8 @@ async def readiness_check():
             logger.error(f"Missing required environment variables: {missing_vars}")
             raise HTTPException(status_code=503, detail=f"Missing environment variables: {missing_vars}")
 
-        # Quick connectivity check to downstream services (timeout after 2 seconds each)
+        # For serverless: Check service URLs are configured, but don't require them to be healthy
+        # Services start/stop independently in serverless, so gateway should be ready regardless
         service_checks = []
         services_to_check = [
             ("knowledgebase_ingestion", os.getenv("KNOWLEDGEBASE_INGESTION_URL")),
@@ -345,29 +346,25 @@ async def readiness_check():
             ("chatbot_orchestration", os.getenv("CHATBOT_ORCHESTRATION_URL")),
         ]
 
+        configured_services = 0
         for service_name, service_url in services_to_check:
             if service_url:
-                try:
-                    # Quick health check with short timeout
-                    async with httpx.AsyncClient(timeout=2.0) as client:
-                        response = await client.get(f"{service_url}/health")
-                        if response.status_code == 200:
-                            service_checks.append({"name": service_name, "status": "healthy"})
-                        else:
-                            service_checks.append({"name": service_name, "status": "unhealthy", "code": response.status_code})
-                except Exception as e:
-                    logger.warning(f"Service {service_name} health check failed: {e}")
-                    service_checks.append({"name": service_name, "status": "unhealthy", "error": str(e)})
+                configured_services += 1
+                # Just mark as configured - don't check health for readiness
+                service_checks.append({"name": service_name, "status": "configured", "url": service_url})
+            else:
+                service_checks.append({"name": service_name, "status": "not_configured"})
 
-        # At least one service should be healthy for the gateway to be ready
-        healthy_services = [s for s in service_checks if s["status"] == "healthy"]
-        if not healthy_services:
-            logger.error("No downstream services are healthy")
-            raise HTTPException(status_code=503, detail="No downstream services available")
+        # API Gateway is ready if it has at least one service configured
+        if configured_services == 0:
+            logger.error("No downstream services are configured")
+            raise HTTPException(status_code=503, detail="No downstream services configured")
 
         return {
             "status": "ready",
             "services": service_checks,
+            "serverless_optimized": True,
+            "note": "Services start/stop independently - gateway ready regardless of downstream health",
             "timestamp": "2025-12-19T18:00:00Z"
         }
     except HTTPException:
