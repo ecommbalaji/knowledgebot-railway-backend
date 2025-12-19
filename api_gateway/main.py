@@ -2,7 +2,20 @@
 import os
 import sys
 import logging
+import time
+from typing import Optional, Dict, Any, List
+from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+import httpx
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
+# Load environment variables
+load_dotenv()
+
+# Configure basic logging for early diagnostics
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
