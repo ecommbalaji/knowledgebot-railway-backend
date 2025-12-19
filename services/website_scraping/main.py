@@ -12,6 +12,7 @@ from crawl4ai import AsyncWebCrawler
 from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
 import tempfile
 from contextlib import asynccontextmanager
+from shared.config import settings
 
 load_dotenv()
 
