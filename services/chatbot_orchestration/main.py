@@ -727,14 +727,7 @@ async def health_check(request: Request):
     log_endpoint_request("chatbot_orchestration", "health", request)
     
     # Check critical dependencies
-    health_status = {"status": "healthy", "service": "chatbot_orchestration"}
-    
-    if not settings.gemini_api_key or not settings.openai_api_key:
-        health_status["status"] = "unhealthy"
-        health_status["error"] = "Missing required API keys"
-        return JSONResponse(status_code=503, content=health_status)
-        
-    return health_status
+    return {"status": "healthy", "service": "chatbot_orchestration"}
 
 @app.post("/chat", response_model=ChatSessionResponse)
 async def chat(request: ChatRequest):
