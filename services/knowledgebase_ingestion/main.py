@@ -1,8 +1,8 @@
 """Knowledgebase Ingestion Service - Handles document uploads, R2 storage, and Gemini FileSearch."""
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, HttpUrl, Field
+from typing import Optional, List, Dict, Any
 from google import genai
 import os
 import logging
@@ -193,7 +193,7 @@ async def get_or_create_user(email: str) -> str:
 @app.post("/upload", response_model=UploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    display_name: Optional[str] = None,
+    display_name: Optional[str] = Form(None),
     user_email: Optional[str] = Header(None, alias="X-User-Email")
 ):
     """
