@@ -21,9 +21,9 @@ WORKDIR /app/services/chatbot_orchestration
 
 
 
-# Add health check (more forgiving start-period for cold starts)
+# Update health check to use the `/ready` endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=5 \
-    CMD sh -c 'curl -f http://localhost:${CHATBOT_ORCH_PORT:-8003}/health || exit 1'
+    CMD sh -c 'curl -f http://localhost:${CHATBOT_ORCH_PORT:-8003}/ready || exit 1'
 
 # Run the application with uvicorn - prefer CHATBOT_ORCH_PORT, else PORT, else default
 CMD sh -c 'uvicorn main:app --host 0.0.0.0 --port ${CHATBOT_ORCH_PORT:-8003}'

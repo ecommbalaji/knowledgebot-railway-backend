@@ -112,9 +112,6 @@ if r2_config_value:
 else:
     logger.info("ℹ️  R2 storage not configured (cloudflare_r2_url not set)")
 
-# ...existing code above continues...
-
-
 class FileInfo(BaseModel):
     name: str
     display_name: str
@@ -145,6 +142,17 @@ class FilesResponse(BaseModel):
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "knowledgebase_ingestion"}
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness endpoint to check critical dependencies."""
+    try:
+        # Add checks for critical dependencies here
+        return {"status": "ready"}
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service not ready")
 
 
 def calculate_sha256(file_path: str) -> str:

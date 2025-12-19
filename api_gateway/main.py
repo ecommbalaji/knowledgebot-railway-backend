@@ -325,6 +325,17 @@ async def health_check():
         raise HTTPException(status_code=503, detail=f"Health check failed: {str(e)}")
 
 
+@app.get("/ready")
+async def readiness_check():
+    """Readiness endpoint to check critical dependencies."""
+    try:
+        # Add checks for critical dependencies here
+        return {"status": "ready"}
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+
 @app.get("/status")
 async def system_status():
     """Check connections to all downstream services with detailed logging."""

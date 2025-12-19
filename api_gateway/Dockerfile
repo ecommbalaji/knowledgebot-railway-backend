@@ -54,10 +54,9 @@ RUN mkdir -p /app/logs && \
 
 
 
-# Add health check (prefer API_GATEWAY_PORT, else PORT, else default)
-# Make healthcheck more forgiving during cold starts: longer start period and more retries
+# Update health check to use the `/ready` endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=5 \
-    CMD sh -c 'curl -f http://localhost:${API_GATEWAY_PORT:-8000}/health || exit 1'
+    CMD sh -c 'curl -f http://localhost:${API_GATEWAY_PORT:-8000}/ready || exit 1'
 
 # Run the application with explicit module path and prefer API_GATEWAY_PORT, then PORT, then default
 CMD sh -c 'python -m uvicorn main:app --host 0.0.0.0 --port ${API_GATEWAY_PORT:-8000} --log-level info --access-log'

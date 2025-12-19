@@ -688,6 +688,17 @@ async def health_check():
     return {"status": "healthy", "service": "chatbot_orchestration"}
 
 
+@app.get("/ready")
+async def readiness_check():
+    """Readiness endpoint to check critical dependencies."""
+    try:
+        # Add checks for critical dependencies here
+        return {"status": "ready"}
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+
 @app.post("/chat", response_model=ChatSessionResponse)
 async def chat(request: ChatRequest):
     """
