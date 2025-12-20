@@ -609,25 +609,45 @@ async def knowledgebase_upload_endpoint(
     user_email: Optional[str] = Header(None, alias="X-User-Email")
 ):
     """Route knowledgebase upload requests to knowledgebase ingestion service."""
+    file_content = None
     try:
         logger.info(f"📁 Received file upload request: {file.filename}, size: {file.size if hasattr(file, 'size') else 'unknown'}")
+        logger.info(f"📋 Content type: {file.content_type}")
+
+        # Read the file content asynchronously
+        file_content = await file.read()
+        logger.info(f"📦 File content read: {len(file_content)} bytes")
 
         # Prepare multipart form data for forwarding
+        # Using a tuple of (filename, file_content, content_type) for httpx
+        # This maps to FastAPI's: file: UploadFile = File(...)
         files = {
-            'file': (file.filename, await file.read(), file.content_type)
+            'file': (
+                file.filename or 'uploaded_file',
+                file_content,
+                file.content_type or 'application/octet-stream'
+            )
         }
 
-        # Prepare form data
+        # Prepare form data fields
+        # This maps to FastAPI's: display_name: Optional[str] = Form(None)
         data = {}
         if display_name:
             data['display_name'] = display_name
+            logger.info(f"📝 Display name: {display_name}")
+        else:
+            logger.info("📝 No display name provided")
 
-        # Prepare headers
+        # Prepare headers for forwarding
+        # This maps to FastAPI's: user_email: Optional[str] = Header(None, alias="X-User-Email")
         headers = {}
         if user_email:
             headers['X-User-Email'] = user_email
+            logger.info(f"👤 User email: {user_email}")
+        else:
+            logger.info("👤 No user email provided in headers")
 
-        # Remove hop-by-hop headers
+        # Remove hop-by-hop and problematic headers
         request_headers = dict(request.headers)
         hop_by_hop_headers = [
             'connection', 'keep-alive', 'proxy-authenticate',
@@ -636,31 +656,72 @@ async def knowledgebase_upload_endpoint(
         headers.update({k: v for k, v in request_headers.items()
                        if k.lower() not in hop_by_hop_headers and k.lower() not in ['content-type', 'content-length', 'host']})
 
-        logger.info(f"📤 Forwarding upload to: {KNOWLEDGEBASE_INGESTION_URL}/upload")
+        target_url = f"{KNOWLEDGEBASE_INGESTION_URL}/upload"
+        logger.info(f"📤 Forwarding upload to: {target_url}")
+        logger.info(f"📋 Multipart file field: 'file' = {file.filename} ({len(file_content)} bytes)")
+        logger.info(f"📋 Form data fields: {data if data else 'None'}")
+        logger.info(f"📋 Custom headers: {headers if headers else 'None'}")
 
-        async with httpx.AsyncClient() as client:
+        # Create async HTTP client with appropriate timeout
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0)
+        ) as client:
+            # Forward the request asynchronously
             resp = await client.post(
-                f"{KNOWLEDGEBASE_INGESTION_URL}/upload",
+                target_url,
                 files=files,
                 data=data,
-                headers=headers,
-                timeout=60.0  # Longer timeout for file uploads
+                headers=headers
             )
 
             logger.info(f"📥 Upload response status: {resp.status_code}")
 
+            # Parse response content
+            response_content = None
+            try:
+                response_content = resp.json()
+                logger.info(f"📥 Upload response (JSON): {response_content}")
+            except Exception as json_error:
+                logger.warning(f"⚠️  Could not parse response as JSON: {json_error}")
+                response_content = resp.text
+                logger.info(f"📥 Upload response (text): {response_content[:500]}")
+
+            # Log success or warnings
             if resp.status_code == 200:
                 logger.info("✅ File upload completed successfully")
             else:
                 logger.warning(f"⚠️  File upload returned status {resp.status_code}")
+                logger.warning(f"⚠️  Response details: {response_content}")
 
+            # Return the response from the backend service
             return JSONResponse(
                 status_code=resp.status_code,
-                content=resp.json() if resp.headers.get('content-type', '').startswith('application/json') else resp.text
+                content=response_content if isinstance(response_content, dict) else {"detail": response_content}
             )
+
+    except httpx.TimeoutException as te:
+        logger.error(f"⏰ Upload request timed out: {te}")
+        raise HTTPException(
+            status_code=504,
+            detail=f"Upload request timed out. The file may be too large or the service is slow to respond: {str(te)}"
+        )
+    except httpx.ConnectError as ce:
+        logger.error(f"🚫 Could not connect to knowledgebase service at {KNOWLEDGEBASE_INGESTION_URL}: {ce}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not connect to knowledgebase service: {str(ce)}"
+        )
     except Exception as e:
-        logger.error(f"❌ Error routing knowledgebase upload request: {e}")
-        raise HTTPException(status_code=500, detail=f"Knowledgebase service error: {str(e)}")
+        logger.error(f"❌ Error routing knowledgebase upload request: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Knowledgebase service error: {str(e)}"
+        )
+    finally:
+        # Clean up file content from memory
+        if file_content:
+            del file_content
+            logger.debug("🧹 File content cleaned from memory")
 
 
 @app.get("/api/v1/knowledgebase/files")
