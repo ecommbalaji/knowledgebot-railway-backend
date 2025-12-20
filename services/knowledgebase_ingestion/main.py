@@ -30,6 +30,7 @@ logging.basicConfig(
     force=True
 )
 logger = logging.getLogger("knowledgebase_ingestion")
+logger.setLevel(logging.INFO)
 
 # Ensure shared utilities are importable and enable global exception logging
 import sys
@@ -116,6 +117,13 @@ if r2_config_value:
         logger.info("✅ R2 storage initialized successfully")
         logger.info(f"R2 bucket: {r2_storage.bucket_name}")
         logger.info(f"R2 public URL: {r2_storage.public_url or 'Not configured'}")
+        # Validate connectivity and permissions
+        try:
+            resp = r2_storage.s3_client.list_objects_v2(Bucket=r2_storage.bucket_name, MaxKeys=1)
+            total = resp.get('KeyCount', 0)
+            logger.info(f"🔍 R2 connectivity OK. Sample KeyCount: {total}")
+        except Exception as e:
+            logger.error(f"⚠️ R2 connectivity check failed: {e}")
     except Exception as e:
         logger.error(f"❌ Failed to initialize R2 storage: {e}")
         logger.error(f"Error type: {type(e).__name__}")
@@ -234,8 +242,10 @@ async def _persist_to_r2(tmp_path: str, original_filename: str, file_display_nam
             r2_key = r2_result.get('key')
             r2_url = r2_result.get('url')
             logger.info(f"✅ [R2] Upload successful. Key: {r2_key}")
+            if not r2_url:
+                logger.info("ℹ️ [R2] Bucket is private. No public URL will be shown.")
         except Exception as e:
-            logger.warning(f"⚠️ [R2] Upload failed, but continuing: {e}")
+            logger.exception(f"⚠️ [R2] Upload failed, but continuing: {e}")
     else:
         logger.info("ℹ️ [R2] Skipping - Storage not configured")
         

@@ -26,6 +26,7 @@ logging.basicConfig(
     force=True
 )
 logger = logging.getLogger("website_scraping")
+logger.setLevel(logging.INFO)
 
 # Ensure shared utilities are importable and enable global exception logging
 from pathlib import Path

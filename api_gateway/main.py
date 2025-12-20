@@ -23,6 +23,7 @@ logging.basicConfig(
     force=True
 )
 logger = logging.getLogger("api_gateway")
+logger.setLevel(logging.INFO)
 
 # Log port and environment basic state
 logger.info("🔍 --- API Gateway Startup Diagnostics ---")

@@ -11,6 +11,7 @@ logging.basicConfig(
     force=True
 )
 logger = logging.getLogger("chatbot_orchestration")
+logger.setLevel(logging.INFO)
 
 # Log port and environment basic state
 logger.info("🔍 --- Chatbot Startup Diagnostics ---")
