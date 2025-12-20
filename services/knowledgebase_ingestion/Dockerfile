@@ -3,6 +3,7 @@ FROM python:3.12-slim
 # Add metadata labels
 LABEL maintainer="Knowledge Bot Team"
 LABEL description="Knowledgebase Ingestion Service for Knowledge Bot"
+LABEL version="1.0.1"
 
 # Set environment variables for better logging and Python behavior
 ENV PYTHONUNBUFFERED=1
