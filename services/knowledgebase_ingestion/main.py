@@ -22,8 +22,25 @@ from shared.r2_storage import R2Storage
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging for containerized environments (Railway, Docker)
+# Force output to stdout/stderr for proper log aggregation
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)  # Explicitly use stdout
+    ],
+    force=True  # Override any existing configuration
+)
 logger = logging.getLogger(__name__)
+
+# Log startup diagnostics
+logger.info("="*60)
+logger.info("KNOWLEDGEBASE INGESTION SERVICE STARTING UP")
+logger.info("="*60)
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Working directory: {os.getcwd()}")
+logger.info(f"Environment: {os.getenv('RAILWAY_ENVIRONMENT', 'development')}")
 
 # Ensure shared utilities are importable and enable global exception logging
 import sys
@@ -76,6 +93,44 @@ app = FastAPI(
 
 # Register FastAPI-level exception handlers to ensure stack traces are logged
 register_fastapi_exception_handlers(app, "knowledgebase_ingestion")
+
+# Request logging middleware
+import time
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Middleware to log all incoming requests with timing and status information."""
+    start_time = time.time()
+    request_id = f"{int(start_time * 1000000) % 1000000:06d}"  # Simple request ID
+
+    # Log incoming request
+    logger.info(f"📨 [{request_id}] {request.method} {request.url.path} - Client: {request.client.host if request.client else 'unknown'}")
+
+    # Log headers (excluding sensitive ones)
+    safe_headers = {k: v for k, v in request.headers.items()
+                   if k.lower() not in ['authorization', 'x-api-key', 'cookie']}
+    if safe_headers:
+        logger.debug(f"📋 [{request_id}] Headers: {dict(safe_headers)}")
+
+    try:
+        # Process the request
+        response = await call_next(request)
+
+        # Calculate duration
+        duration = time.time() - start_time
+
+        # Log response
+        if response.status_code >= 400:
+            logger.warning(f"↩️ [{request_id}] Response: {response.status_code} - Path: {request.url.path} - Duration: {duration:.3f}s")
+        else:
+            logger.info(f"↩️ [{request_id}] Response: {response.status_code} - Duration: {duration:.3f}s")
+
+        return response
+
+    except Exception as e:
+        duration = time.time() - start_time
+        logger.error(f"💥 [{request_id}] Request failed after {duration:.3f}s: {e}", exc_info=True)
+        raise
 
 app.add_middleware(
     CORSMiddleware,
