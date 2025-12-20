@@ -64,4 +64,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
 # Run the application with uvicorn - prefer KB_INGESTION_PORT, else PORT, else default 8001
 # Enable info log level (debug can be too verbose) and access logs for better visibility
 # Using exec to ensure proper signal handling and log flushing
-CMD ["sh", "-c", "echo '🚀 Starting Knowledgebase Ingestion Service...' && echo '🌐 Runtime Port Check: KB_INGESTION_PORT='${KB_INGESTION_PORT}' PORT='${PORT} && exec python -m uvicorn main:app --host 0.0.0.0 --port ${KB_INGESTION_PORT:-${PORT:-8001}} --log-level info --access-log --log-config-file /dev/null"]
+CMD ["sh", "-c", "echo '🚀 Starting Knowledgebase Ingestion Service...' && echo '🌐 Runtime Port Check: KB_INGESTION_PORT='${KB_INGESTION_PORT}' PORT='${PORT} && exec python -m uvicorn main:app --host 0.0.0.0 --port ${KB_INGESTION_PORT:-${PORT:-8001}} --log-level debug --access-log"]
