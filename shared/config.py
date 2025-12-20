@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     
     # Cloudflare R2 Configuration (connection string format)
     # Format: r2://access_key_id:secret_access_key@account_id/bucket_name?public_url=https://pub-xxxxx.r2.dev
+    #
     cloudflare_r2_url: Optional[str] = None
     
     # Railway PostgreSQL Configuration (connection URL only)

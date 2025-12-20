@@ -295,7 +295,7 @@ async def _process_with_gemini(tmp_path: str, file_display_name: str, content_ty
     """Upload to Gemini FileSearch and poll for processing completion."""
     logger.info(f"🤖 [GEMINI] Uploading {file_display_name} to FileSearch...")
     uploaded_file = genai_client.files.upload(
-        path=tmp_path,
+        file=tmp_path,
         config=dict(
             display_name=file_display_name,
             mime_type=content_type
