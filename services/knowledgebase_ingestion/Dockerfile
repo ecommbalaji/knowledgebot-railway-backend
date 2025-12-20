@@ -56,12 +56,12 @@ WORKDIR /app/services/knowledgebase_ingestion
 RUN mkdir -p /app/logs && \
     echo "📝 Logs directory created"
 
+
 # Update health check to use the `/health` endpoint
-# Increased start-period and retries to reduce premature restarts
+# More forgiving start-period to account for cold starts and heavy startup tasks
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD sh -c 'curl -f http://localhost:${KB_INGESTION_PORT:-${PORT:-8001}}/health || exit 1'
 
-# Run the application with uvicorn - prefer KB_INGESTION_PORT, else PORT, else default 8001
-# Enable info log level (debug can be too verbose) and access logs for better visibility
-# Using exec to ensure proper signal handling and log flushing
-CMD ["sh", "-c", "echo '🚀 Starting Knowledgebase Ingestion Service...' && echo '🌐 Runtime Port Check: KB_INGESTION_PORT='${KB_INGESTION_PORT}' PORT='${PORT} && exec python -m uvicorn main:app --host 0.0.0.0 --port ${KB_INGESTION_PORT:-${PORT:-8001}} --log-level debug --access-log"]
+# Run the application with uvicorn - prefer WEBSITE_SCRAPING_PORT, else PORT, else default 8002
+# Enable debug log level and access logs for better visibility
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${KB_INGESTION_PORT:-${PORT:-8001}} --log-level debug --access-log"]
