@@ -31,4 +31,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD sh -c 'curl -f http://localhost:${WEBSITE_SCRAPING_PORT:-${PORT:-8002}}/health || exit 1'
 
 # Run the application with uvicorn - prefer WEBSITE_SCRAPING_PORT, else PORT, else default 8002
-CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${WEBSITE_SCRAPING_PORT:-${PORT:-8002}}"]
+# Enable debug log level and access logs for better visibility
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${WEBSITE_SCRAPING_PORT:-${PORT:-8002}} --log-level debug --access-log"]

@@ -26,7 +26,8 @@ load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
 )
 logger = logging.getLogger("knowledgebase_ingestion")
 
@@ -712,4 +713,3 @@ if __name__ == "__main__":
     port = int(os.getenv("KB_INGESTION_PORT", os.getenv("PORT", "8001")))
     logger.info(f"🚀 Starting knowledgebase_ingestion service on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
-```
