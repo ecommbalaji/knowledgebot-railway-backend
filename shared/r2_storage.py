@@ -55,7 +55,7 @@ class R2Storage:
         self.public_url = public_url
         
         # Auto-generate endpoint URL from account_id
-        endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com"
+        endpoint_url = f"https://{account_id}.eu.r2.cloudflarestorage.com"
         
         # Create S3-compatible client for R2
         self.s3_client = boto3.client(
