@@ -420,7 +420,7 @@ async def upload_document(
     email = user_email or settings.default_user_email
     
     # Create a contextual prefix for logs to track this specific request
-    log_context = {"filename": original_filename, "user_email": email}
+    log_context = {"upload_file_name": original_filename, "user_email": email}
     logger.info(f"Initiating upload pipeline for {original_filename}", extra=log_context)
 
     try:
