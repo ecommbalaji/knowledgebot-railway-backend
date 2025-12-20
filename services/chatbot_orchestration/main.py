@@ -3,15 +3,8 @@ import os
 import sys
 import logging
 
-# Configure logging with stdout handler
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)],
-    force=True
-)
-logger = logging.getLogger("chatbot_orchestration")
-logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Log port and environment basic state
 logger.info("🔍 --- Chatbot Startup Diagnostics ---")
@@ -79,6 +72,9 @@ async def get_neon_db():
     return neon_db
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Ensure shared utilities are importable and enable global exception logging
 import sys

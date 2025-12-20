@@ -6,7 +6,6 @@ from typing import Optional, Dict, Any
 from google import genai
 import os
 import logging
-import sys
 from dotenv import load_dotenv
 import asyncio
 from crawl4ai import AsyncWebCrawler
@@ -18,17 +17,11 @@ from shared.config import settings
 
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)],
-    force=True
-)
-logger = logging.getLogger("website_scraping")
-logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Ensure shared utilities are importable and enable global exception logging
+import sys
 from pathlib import Path
 try:
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))

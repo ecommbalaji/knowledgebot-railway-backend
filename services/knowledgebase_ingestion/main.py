@@ -22,15 +22,8 @@ from shared.r2_storage import R2Storage
 
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)],
-    force=True
-)
-logger = logging.getLogger("knowledgebase_ingestion")
-logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Ensure shared utilities are importable and enable global exception logging
 import sys
@@ -117,13 +110,6 @@ if r2_config_value:
         logger.info("✅ R2 storage initialized successfully")
         logger.info(f"R2 bucket: {r2_storage.bucket_name}")
         logger.info(f"R2 public URL: {r2_storage.public_url or 'Not configured'}")
-        # Validate connectivity and permissions
-        try:
-            resp = r2_storage.s3_client.list_objects_v2(Bucket=r2_storage.bucket_name, MaxKeys=1)
-            total = resp.get('KeyCount', 0)
-            logger.info(f"🔍 R2 connectivity OK. Sample KeyCount: {total}")
-        except Exception as e:
-            logger.error(f"⚠️ R2 connectivity check failed: {e}")
     except Exception as e:
         logger.error(f"❌ Failed to initialize R2 storage: {e}")
         logger.error(f"Error type: {type(e).__name__}")
@@ -242,10 +228,8 @@ async def _persist_to_r2(tmp_path: str, original_filename: str, file_display_nam
             r2_key = r2_result.get('key')
             r2_url = r2_result.get('url')
             logger.info(f"✅ [R2] Upload successful. Key: {r2_key}")
-            if not r2_url:
-                logger.info("ℹ️ [R2] Bucket is private. No public URL will be shown.")
         except Exception as e:
-            logger.exception(f"⚠️ [R2] Upload failed, but continuing: {e}")
+            logger.warning(f"⚠️ [R2] Upload failed, but continuing: {e}")
     else:
         logger.info("ℹ️ [R2] Skipping - Storage not configured")
         
@@ -350,6 +334,13 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
     return db_record_id
 
 
+import time
+import logging
+from fastapi import HTTPException, status
+
+# Use a specific logger for this module
+logger = logging.getLogger(__name__)
+
 @app.post("/upload", response_model=UploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
@@ -357,49 +348,58 @@ async def upload_document(
     user_email: Optional[str] = Header(None, alias="X-User-Email")
 ):
     """
-    Modularized Document Ingestion Pipeline:
-    1. Stream to local temp storage
-    2. Optional persistence to Cloudflare R2
-    3. Mandatory processing with Gemini FileSearch
-    4. Metadata & Metrics recording in PostgreSQL
+    Modularized Document Ingestion Pipeline with structured logging and performance tracking.
     """
+    start_time = time.perf_counter()
+    
+    # Configuration Check
     if not genai_client:
+        logger.critical("Upload failed: Gemini client not configured in environment.")
         from shared.utils import dependency_unavailable_error
-        logger.error(f"Gemini not configured")
         raise dependency_unavailable_error("gemini", "client not configured")
 
-    # Initialize variables for cleanup and tracking
+    # Initial State
     tmp_path = None
-    file_display_name = display_name or file.filename or "uploaded_file"
-    original_filename = file.filename or "uploaded_file"
+    original_filename = file.filename or "unknown_file"
+    file_display_name = display_name or original_filename
     email = user_email or settings.default_user_email
     
-    logger.info(f"🚀 [UPLOAD] Initiating pipeline for: {original_filename}")
+    # Create a contextual prefix for logs to track this specific request
+    log_context = {"filename": original_filename, "user_email": email}
+    logger.info(f"Initiating upload pipeline for {original_filename}", extra=log_context)
 
     try:
         # Step 0: User Setup
         user_id = None
         if railway_db:
             user_id = await get_or_create_user(email)
-            logger.info(f"👤 [UPLOAD] User: {email} (ID: {user_id})")
+            log_context["user_id"] = user_id
+            logger.debug(f"User resolved to ID: {user_id}", extra=log_context)
 
         # Step 1: Stream to disk
+        logger.info(f"Streaming {original_filename} to local temp storage...", extra=log_context)
         tmp_path, file_size = await _stream_to_temp_file(file, original_filename)
         sha256_hash = calculate_sha256(tmp_path)
-        logger.info(f"🔢 [UPLOAD] File hash: {sha256_hash}")
+        log_context["sha256"] = sha256_hash
+        logger.info(f"File streamed. Size: {file_size} bytes, Hash: {sha256_hash}", extra=log_context)
 
-        # Step 2: Persist to R2
+        # Step 2: Persist to R2 (Cloud Storage)
+        logger.info("Persisting file to Cloudflare R2...", extra=log_context)
         r2_result, r2_key, r2_url = await _persist_to_r2(
             tmp_path, original_filename, file_display_name, 
             file.content_type or "application/octet-stream", email
         )
+        logger.info(f"R2 Persistence complete. Key: {r2_key}", extra=log_context)
 
-        # Step 3: Process with Gemini
+        # Step 3: Process with Gemini (AI Processing)
+        logger.info("Sending file to Gemini FileSearch API...", extra=log_context)
         uploaded_file, final_state, gemini_processed_at = await _process_with_gemini(
             tmp_path, file_display_name, file.content_type or "application/octet-stream"
         )
+        logger.info(f"Gemini processing finished. State: {final_state}", extra=log_context)
 
-        # Step 4: Record Metadata
+        # Step 4: Record Metadata (PostgreSQL)
+        logger.info("Recording final metadata to PostgreSQL...", extra=log_context)
         file_ext = os.path.splitext(original_filename)[1] or ".bin"
         db_record_id = await _record_metadata(
             user_id, original_filename, file_display_name, file_ext,
@@ -407,43 +407,57 @@ async def upload_document(
             r2_result, final_state, gemini_processed_at
         )
 
-        # Step 5: Construct Response
-        file_info = FileInfo(
-            name=uploaded_file.name,
-            display_name=uploaded_file.display_name,
-            mime_type=uploaded_file.mime_type,
-            create_time=uploaded_file.create_time.isoformat() if uploaded_file.create_time else None,
-            update_time=uploaded_file.update_time.isoformat() if uploaded_file.update_time else None,
-            expiration_time=uploaded_file.expiration_time.isoformat() if uploaded_file.expiration_time else None,
-            size_bytes=str(uploaded_file.size_bytes or file_size),
-            sha256_hash=sha256_hash,
-            uri=getattr(uploaded_file, 'uri', None),
-            state=final_state,
-            r2_url=r2_url,
-            r2_key=r2_key,
-            db_record_id=str(db_record_id) if db_record_id else None
+        # Step 5: Finalize Response
+        duration = time.perf_counter() - start_time
+        logger.info(
+            f"Pipeline successful for {original_filename} in {duration:.2f}s", 
+            extra={**log_context, "duration_sec": duration}
         )
 
-        logger.info(f"🏁 [UPLOAD] Pipeline successful for {original_filename}")
         return UploadResponse(
             success=True,
-            file=file_info,
+            file=FileInfo(
+                name=uploaded_file.name,
+                display_name=uploaded_file.display_name,
+                mime_type=uploaded_file.mime_type,
+                create_time=uploaded_file.create_time.isoformat() if uploaded_file.create_time else None,
+                update_time=uploaded_file.update_time.isoformat() if uploaded_file.update_time else None,
+                expiration_time=uploaded_file.expiration_time.isoformat() if uploaded_file.expiration_time else None,
+                size_bytes=str(uploaded_file.size_bytes or file_size),
+                sha256_hash=sha256_hash,
+                uri=getattr(uploaded_file, 'uri', None),
+                state=final_state,
+                r2_url=r2_url,
+                r2_key=r2_key,
+                db_record_id=str(db_record_id) if db_record_id else None
+            ),
             message=f"File processed successfully: {file_display_name}"
         )
 
+    except ValueError as ve:
+        # Catch validation/input errors separately
+        logger.warning(f"Validation error during upload: {ve}", extra=log_context)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+
     except Exception as e:
-        logger.error(f"❌ [UPLOAD] Pipeline failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+        # Log the full stack trace for unexpected system errors
+        logger.error(
+            f"Critical failure in ingestion pipeline: {type(e).__name__} - {e}", 
+            exc_info=True, 
+            extra=log_context
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="An internal error occurred during document processing."
+        )
         
     finally:
-        # Guaranteed cleanup of local temporary file
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
-                logger.debug(f"🧹 [UPLOAD] Cleaned up: {tmp_path}")
-            except Exception as e:
-                logger.warning(f"⚠️ [UPLOAD] Failed to clean up {tmp_path}: {e}")
-
+                logger.debug(f"Temporary file deleted: {tmp_path}", extra=log_context)
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to delete temp file {tmp_path}: {cleanup_err}", extra=log_context)
 
 @app.get("/files", response_model=FilesResponse)
 async def list_files():
@@ -723,3 +737,4 @@ if __name__ == "__main__":
     port = int(os.getenv("KB_INGESTION_PORT", os.getenv("PORT", "8001")))
     logger.info(f"🚀 Starting knowledgebase_ingestion service on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
+```
