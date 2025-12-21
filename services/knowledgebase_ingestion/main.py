@@ -342,36 +342,47 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
 
     try:
         logger.info(f"🗄️ [DB] Saving metadata for {original_filename}")
-        db_record_id = await railway_db.fetchval(
-            """
-            INSERT INTO file_uploads (
-                user_id, original_filename, display_name, file_extension,
-                cloudflare_r2_url, cloudflare_r2_key, gemini_file_name, gemini_file_uri,
-                mime_type, size_bytes, sha256_hash,
-                r2_upload_status, gemini_upload_status, gemini_state,
-                gemini_processed_at, expires_at, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-            RETURNING id
-            """,
-            user_id,
-            original_filename,
-            file_display_name,
-            file_ext.lstrip('.'),
-            r2_url,
-            r2_key,
-            uploaded_file.name,
-            getattr(uploaded_file, 'uri', None),
-            uploaded_file.mime_type or "application/octet-stream",
-            file_size,
-            sha256_hash,
-            'completed' if r2_result else 'skipped',
-            final_state.lower(),
-            final_state,
-            gemini_processed_at,
-            uploaded_file.expiration_time if hasattr(uploaded_file, 'expiration_time') else None,
-            json.dumps({'r2_uploaded': r2_result is not None, 'gemini_file_id': uploaded_file.name})
-        )
+        try:
+            logger.info(f"DEBUG: Executing INSERT query. Pool available: {railway_db._pool is not None}")
+            if railway_db._pool:
+                logger.info(f"DEBUG: Pool stats - Free: {railway_db._pool.get_idle_size()}, Size: {railway_db._pool.get_size()}")
+
+            db_record_id = await asyncio.wait_for(
+                railway_db.fetchval(
+                    """
+                    INSERT INTO file_uploads (
+                        user_id, original_filename, display_name, file_extension,
+                        cloudflare_r2_url, cloudflare_r2_key, gemini_file_name, gemini_file_uri,
+                        mime_type, size_bytes, sha256_hash,
+                        r2_upload_status, gemini_upload_status, gemini_state,
+                        gemini_processed_at, expires_at, metadata
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                    RETURNING id
+                    """,
+                    user_id,
+                    original_filename,
+                    file_display_name,
+                    file_ext.lstrip('.'),
+                    r2_url,
+                    r2_key,
+                    uploaded_file.name,
+                    getattr(uploaded_file, 'uri', None),
+                    uploaded_file.mime_type or "application/octet-stream",
+                    file_size,
+                    sha256_hash,
+                    'completed' if r2_result else 'skipped',
+                    final_state.lower(),
+                    final_state,
+                    gemini_processed_at,
+                    uploaded_file.expiration_time if hasattr(uploaded_file, 'expiration_time') else None,
+                    json.dumps({'r2_uploaded': r2_result is not None, 'gemini_file_id': uploaded_file.name})
+                ),
+                timeout=30.0
+            ) 
+        except asyncio.TimeoutError:
+            logger.error("❌ [DB] TIMEOUT while saving metadata. The database connection might be hanging.")
+            raise
         logger.info(f"✅ [DB] Record created with ID: {db_record_id}")
         
         # Log metric
@@ -430,6 +441,13 @@ async def upload_document(
             user_id = await get_or_create_user(email)
             log_context["user_id"] = user_id
             logger.debug(f"User resolved to ID: {user_id}", extra=log_context)
+        else:
+            logger.warning("RAILWAY_DB is None. Checking config...", extra=log_context)
+            url_configured = bool(settings.railway_postgres_url)
+            logger.warning(f"Is RAILWAY_POSTGRES_URL configured in settings? {url_configured}", extra=log_context)
+            if url_configured:
+                masked_url = settings.railway_postgres_url.split('@')[-1] if '@' in settings.railway_postgres_url else "..."
+                logger.warning(f"Configured URL host: {masked_url}", extra=log_context)
 
         # Step 1: Stream to disk
         logger.info(f"Streaming {original_filename} to local temp storage...", extra=log_context)
