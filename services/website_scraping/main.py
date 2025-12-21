@@ -29,6 +29,8 @@ except Exception:
     logger.debug("Could not adjust sys.path for shared imports")
 
 from shared.utils import setup_global_exception_logging, register_fastapi_exception_handlers, dependency_unavailable_error, log_system_metrics, log_endpoint_request
+from shared import db as shared_db
+import json
 setup_global_exception_logging("website_scraping")
 
 # Validate required environment variables for this service
@@ -245,7 +247,46 @@ async def scrape_website(request: ScrapeRequest):
                     "mime_type": uploaded_file.mime_type,
                     "state": uploaded_file.state.name if hasattr(uploaded_file, 'state') else None,
                 }
-                
+                # Persist scraped metadata to Railway Postgres if available
+                try:
+                    if shared_db.railway_db:
+                        scraping_cfg = {
+                            "max_depth": request.max_depth,
+                            "max_pages": request.max_pages,
+                            "include_patterns": request.include_patterns,
+                            "exclude_patterns": request.exclude_patterns,
+                            "wait_for": request.wait_for,
+                        }
+                        content_bytes = scraped_content.encode('utf-8')
+                        size_bytes = len(content_bytes)
+                        pages_scraped = len(scraped_urls) or (request.max_pages or 1)
+                        await shared_db.railway_db.execute(
+                            """
+                            INSERT INTO scraped_websites (
+                                user_id, original_url, domain, title,
+                                content_length, pages_scraped,
+                                gemini_file_name, gemini_file_uri, mime_type, size_bytes,
+                                gemini_state, scraping_config, metadata
+                            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                            """,
+                            None,
+                            request.url,
+                            domain,
+                            None,
+                            len(scraped_content),
+                            pages_scraped,
+                            uploaded_file.name,
+                            getattr(uploaded_file, 'uri', None) or uploaded_file.name,
+                            file_info.get('mime_type'),
+                            size_bytes,
+                            file_info.get('state'),
+                            json.dumps(scraping_cfg),
+                            json.dumps({"scraped_urls": scraped_urls})
+                        )
+                        logger.info("Persisted scraped website metadata to database")
+                except Exception as e:
+                    logger.exception("Failed to persist scraped website metadata: %s", e)
+
                 return ScrapeResponse(
                     success=True,
                     message=f"Website scraped and uploaded successfully",

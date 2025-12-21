@@ -278,7 +278,7 @@ async def _record_api_usage(
             user_id, duration_ms, json.dumps(metadata or {})
         )
     except Exception as e:
-        logger.warning(f"Failed to record API usage: {e}")
+        logger.exception("Failed to record API usage: %s", e)
 
 async def _stream_to_temp_file(file: UploadFile, original_filename: str) -> tuple[str, int]:
     """Stream an uploaded file to a temporary location."""

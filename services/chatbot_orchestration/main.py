@@ -859,7 +859,12 @@ async def chat(request: ChatRequest):
             data_sources_used=data_sources_used if data_sources_used else ["rag"] if file_context else []
         )
         
-        # Save message to database with data source tracking
+        # Ensure Railway DB is initialized (lazy init) and save message with data source tracking
+        try:
+            await get_railway_db()
+        except Exception:
+            logger.debug("Railway DB lazy init failed or not configured; skipping DB persistence")
+
         if railway_db:
             try:
                 # Get or create session in DB
@@ -919,7 +924,7 @@ async def chat(request: ChatRequest):
                     session_db_id
                 )
             except Exception as e:
-                logger.warning(f"Failed to save chat message to database: {e}")
+                logger.exception("Failed to save chat message to database: %s", e)
         
         # Update session history
         session["messages"].append({

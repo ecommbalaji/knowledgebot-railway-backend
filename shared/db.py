@@ -54,23 +54,39 @@ class Database:
     
     async def execute(self, query: str, *args):
         """Execute a query."""
-        async with self.acquire() as conn:
-            return await conn.execute(query, *args)
+            async with self.acquire() as conn:
+                try:
+                    return await conn.execute(query, *args)
+                except Exception as e:
+                    logger.exception("DB execute failed. Query: %s Args: %s", query, args)
+                    raise
     
     async def fetch(self, query: str, *args):
         """Fetch rows from a query."""
-        async with self.acquire() as conn:
-            return await conn.fetch(query, *args)
+            async with self.acquire() as conn:
+                try:
+                    return await conn.fetch(query, *args)
+                except Exception as e:
+                    logger.exception("DB fetch failed. Query: %s Args: %s", query, args)
+                    raise
     
     async def fetchrow(self, query: str, *args):
         """Fetch a single row from a query."""
-        async with self.acquire() as conn:
-            return await conn.fetchrow(query, *args)
+            async with self.acquire() as conn:
+                try:
+                    return await conn.fetchrow(query, *args)
+                except Exception as e:
+                    logger.exception("DB fetchrow failed. Query: %s Args: %s", query, args)
+                    raise
     
     async def fetchval(self, query: str, *args):
         """Fetch a single value from a query."""
-        async with self.acquire() as conn:
-            return await conn.fetchval(query, *args)
+            async with self.acquire() as conn:
+                try:
+                    return await conn.fetchval(query, *args)
+                except Exception as e:
+                    logger.exception("DB fetchval failed. Query: %s Args: %s", query, args)
+                    raise
 
 
 # Global database instances
