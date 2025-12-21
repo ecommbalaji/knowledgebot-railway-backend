@@ -32,7 +32,19 @@ class Database:
                 max_size=max_size,
                 command_timeout=60
             )
-            logger.info("Database connection pool created successfully")
+            # Log pool creation and redact connection URL for diagnostics
+            try:
+                redacted = self.connection_url
+                # Redact password if present
+                if '//' in redacted and '@' in redacted:
+                    prefix, rest = redacted.split('//', 1)
+                    creds, host = rest.split('@', 1)
+                    if ':' in creds:
+                        user, _pwd = creds.split(':', 1)
+                        redacted = f"{prefix}//{user}:***@{host}"
+                logger.info("Database connection pool created successfully (%s)", redacted)
+            except Exception:
+                logger.info("Database connection pool created successfully (connection URL redaction failed)")
         except Exception as e:
             logger.error(f"Failed to create database connection pool: {e}")
             logger.debug("Connection URL: %s", self.connection_url)

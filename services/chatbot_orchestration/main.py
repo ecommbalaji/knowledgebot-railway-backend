@@ -884,6 +884,7 @@ async def chat(request: ChatRequest):
                         True,
                         0
                     )
+                logger.info(f"Chat session DB id: {session_db_id} (session_id={session_id})")
                 
                 # Save user message
                 await railway_db.execute(
@@ -899,6 +900,7 @@ async def chat(request: ChatRequest):
                     "neon_db" in data_sources_used,
                     "internet" in data_sources_used
                 )
+                logger.info("Inserted user message into chat_messages for session id %s", session_db_id)
                 
                 # Save assistant message
                 await railway_db.execute(
@@ -917,12 +919,19 @@ async def chat(request: ChatRequest):
                     json.dumps([{"file_name": s.file_name, "relevance_score": s.relevance_score} for s in response_data.sources]),
                     json.dumps(usage_info) if usage_info else None
                 )
+                logger.info("Inserted assistant message into chat_messages for session id %s", session_db_id)
                 
                 # Update session message count
                 await railway_db.execute(
                     "UPDATE chat_sessions SET message_count = message_count + 2, last_activity_at = CURRENT_TIMESTAMP WHERE id = $1",
                     session_db_id
                 )
+                # Confirm messages count in DB for this session
+                try:
+                    count = await railway_db.fetchval("SELECT COUNT(*) FROM chat_messages WHERE session_id = $1", session_db_id)
+                    logger.info("Chat messages in DB for session %s: %s", session_db_id, count)
+                except Exception:
+                    logger.debug("Could not fetch chat message count for session %s", session_db_id)
             except Exception as e:
                 logger.exception("Failed to save chat message to database: %s", e)
         
