@@ -861,20 +861,21 @@ async def chat(request: ChatRequest):
         
         # Ensure Railway DB is initialized (lazy init) and save message with data source tracking
         try:
-            await get_railway_db()
+            db = await get_railway_db()
         except Exception:
             logger.debug("Railway DB lazy init failed or not configured; skipping DB persistence")
+            db = None
 
-        if railway_db:
+        if db:
             try:
                 # Get or create session in DB
-                session_db_id = await railway_db.fetchval(
+                session_db_id = await db.fetchval(
                     "SELECT id FROM chat_sessions WHERE session_id = $1",
                     session_id
                 )
-                
+
                 if not session_db_id:
-                    session_db_id = await railway_db.fetchval(
+                    session_db_id = await db.fetchval(
                         """
                         INSERT INTO chat_sessions (session_id, is_active, message_count)
                         VALUES ($1, $2, $3)
@@ -885,9 +886,9 @@ async def chat(request: ChatRequest):
                         0
                     )
                 logger.info(f"Chat session DB id: {session_db_id} (session_id={session_id})")
-                
+
                 # Save user message
-                await railway_db.execute(
+                await db.execute(
                     """
                     INSERT INTO chat_messages (session_id, role, content, used_rag, used_postgres, used_neon_db, used_internet_search)
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -901,9 +902,9 @@ async def chat(request: ChatRequest):
                     "internet" in data_sources_used
                 )
                 logger.info("Inserted user message into chat_messages for session id %s", session_db_id)
-                
+
                 # Save assistant message
-                await railway_db.execute(
+                await db.execute(
                     """
                     INSERT INTO chat_messages (session_id, role, content, used_rag, used_postgres, used_neon_db, used_internet_search, confidence_score, sources, usage_info)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -920,15 +921,15 @@ async def chat(request: ChatRequest):
                     json.dumps(usage_info) if usage_info else None
                 )
                 logger.info("Inserted assistant message into chat_messages for session id %s", session_db_id)
-                
+
                 # Update session message count
-                await railway_db.execute(
+                await db.execute(
                     "UPDATE chat_sessions SET message_count = message_count + 2, last_activity_at = CURRENT_TIMESTAMP WHERE id = $1",
                     session_db_id
                 )
                 # Confirm messages count in DB for this session
                 try:
-                    count = await railway_db.fetchval("SELECT COUNT(*) FROM chat_messages WHERE session_id = $1", session_db_id)
+                    count = await db.fetchval("SELECT COUNT(*) FROM chat_messages WHERE session_id = $1", session_db_id)
                     logger.info("Chat messages in DB for session %s: %s", session_db_id, count)
                 except Exception:
                     logger.debug("Could not fetch chat message count for session %s", session_db_id)
