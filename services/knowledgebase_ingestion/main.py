@@ -248,6 +248,38 @@ async def get_or_create_user(email: str) -> str:
         return None
 
 
+async def _record_api_usage(
+    user_id: Optional[str],
+    provider: str,
+    endpoint: str,
+    method: str = "POST",
+    status_code: int = 200,
+    req_size: int = 0,
+    res_size: int = 0,
+    duration_ms: int = 0,
+    metadata: Dict[str, Any] = None
+):
+    """Record API usage to the database."""
+    if not db.railway_db:
+        return
+
+    try:
+        await db.railway_db.execute(
+            """
+            INSERT INTO api_usage (
+                api_provider, api_endpoint, http_method,
+                request_size_bytes, response_size_bytes, status_code,
+                user_id, duration_ms, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            """,
+            provider, endpoint, method,
+            req_size, res_size, status_code,
+            user_id, duration_ms, json.dumps(metadata or {})
+        )
+    except Exception as e:
+        logger.warning(f"Failed to record API usage: {e}")
+
 async def _stream_to_temp_file(file: UploadFile, original_filename: str) -> tuple[str, int]:
     """Stream an uploaded file to a temporary location."""
     import tempfile
