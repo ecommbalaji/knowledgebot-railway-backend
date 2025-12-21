@@ -32,7 +32,7 @@ class Database:
                 max_size=max_size,
                 command_timeout=60
             )
-            logger.info(f"Database connection pool created successfully. Min: {min_size}, Max: {max_size}")
+            logger.info("Database connection pool created successfully")
         except Exception as e:
             logger.error(f"Failed to create database connection pool: {e}")
             logger.debug("Connection URL: %s", self.connection_url)
@@ -49,10 +49,7 @@ class Database:
         """Acquire a connection from the pool."""
         if not self._pool:
             raise RuntimeError("Database pool not initialized. Call connect() first.")
-        
-        # logger.info("DEBUG: Acquiring connection...")
         async with self._pool.acquire() as connection:
-            # logger.info("DEBUG: Connection acquired.")
             yield connection
     
     async def execute(self, query: str, *args):

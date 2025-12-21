@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 # Add shared directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from shared.config import settings
-from shared.db import init_railway_db, railway_db
+from shared import db
 from shared.r2_storage import R2Storage
 
 load_dotenv()
