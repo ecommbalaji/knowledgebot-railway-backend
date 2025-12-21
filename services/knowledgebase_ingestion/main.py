@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
         # Startup - Initialize database connections
         if settings.railway_postgres_url:
             try:
-                await init_railway_db(settings.railway_postgres_url)
+                await db.init_railway_db(settings.railway_postgres_url)
                 logger.info("Railway PostgreSQL database initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize Railway PostgreSQL: {e}")
@@ -78,8 +78,8 @@ async def lifespan(app: FastAPI):
         yield
 
         # Shutdown - Close database connections
-        if railway_db:
-            await railway_db.disconnect()
+        if db.railway_db:
+            await db.railway_db.disconnect()
         logger.info("🛑 Knowledgebase ingestion service shutdown complete")
     except Exception as e:
         logger.error(f"❌ Error in lifespan handler: {e}")
@@ -214,12 +214,12 @@ def calculate_sha256(file_path: str) -> str:
 
 async def get_or_create_user(email: str) -> str:
     """Get or create a user in the database and return user ID."""
-    if not railway_db:
+    if not db.railway_db:
         return None
 
     try:
         # Try to get existing user
-        user = await railway_db.fetchrow(
+        user = await db.railway_db.fetchrow(
             "SELECT id FROM users WHERE email = $1",
             email
         )
@@ -228,7 +228,7 @@ async def get_or_create_user(email: str) -> str:
             return str(user['id'])
 
         # Create new user
-        user_id = await railway_db.fetchval(
+        user_id = await db.railway_db.fetchval(
             """
             INSERT INTO users (email, name, is_active)
             VALUES ($1, $2, $3)
@@ -336,7 +336,7 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
                          final_state: str, gemini_processed_at: Any):
     """Persist file metadata and metrics to the PostgreSQL database."""
     db_record_id = None
-    if not railway_db:
+    if not db.railway_db:
         logger.warning("⚠️ [DB] Database unavailable - Skipping metadata record")
         return None
 
@@ -386,7 +386,7 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
         logger.info(f"✅ [DB] Record created with ID: {db_record_id}")
         
         # Log metric
-        await railway_db.execute(
+        await db.railway_db.execute(
             """
             INSERT INTO metrics (metric_type, metric_name, value, unit, user_id, file_upload_id, metadata)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -437,7 +437,7 @@ async def upload_document(
     try:
         # Step 0: User Setup
         user_id = None
-        if railway_db:
+        if db.railway_db:
             user_id = await get_or_create_user(email)
             log_context["user_id"] = user_id
             logger.debug(f"User resolved to ID: {user_id}", extra=log_context)
@@ -582,7 +582,7 @@ async def list_files_metadata(
         raise dependency_unavailable_error("database", "database not configured")
 
     try:
-        files = await railway_db.fetch(
+        files = await db.railway_db.fetch(
             """
             SELECT id, original_filename, display_name, file_extension, mime_type,
                    size_bytes, created_at, cloudflare_r2_url, cloudflare_r2_key, gemini_file_name
@@ -650,7 +650,7 @@ async def get_service_status():
         "r2_configured": r2_storage is not None,
         "r2_info": r2_info,
         "gemini_configured": genai_client is not None,
-        "database_configured": railway_db is not None,
+        "database_configured": db.railway_db is not None,
         "version": "1.0.0"
     }
 
@@ -764,10 +764,10 @@ async def delete_file(file_name: str):
             logger.warning(f"Failed to delete from Gemini FileSearch: {e}")
 
         # Delete from Cloudflare R2 if configured and we have the key
-        if r2_storage and railway_db:
+        if r2_storage and db.railway_db:
             try:
                 # Get R2 key from database
-                file_record = await railway_db.fetchrow(
+                file_record = await db.railway_db.fetchrow(
                     "SELECT cloudflare_r2_key FROM file_uploads WHERE gemini_file_name = $1",
                     file_name
                 )
@@ -782,13 +782,13 @@ async def delete_file(file_name: str):
         if railway_db:
             try:
                 # Delete from file_uploads
-                deleted_uploads = await railway_db.execute(
+                deleted_uploads = await db.railway_db.execute(
                     "DELETE FROM file_uploads WHERE gemini_file_name = $1",
                     file_name
                 )
 
                 # Also check scraped_websites in case it's a scraped website
-                deleted_scraped = await railway_db.execute(
+                deleted_scraped = await db.railway_db.execute(
                     "DELETE FROM scraped_websites WHERE gemini_file_name = $1",
                     file_name
                 )
