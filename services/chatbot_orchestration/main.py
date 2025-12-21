@@ -51,7 +51,7 @@ async def get_railway_db():
     if railway_db is None and settings.railway_postgres_url:
         try:
             logger.info("🔄 Lazy initializing Railway PostgreSQL database...")
-            await init_railway_db(settings.railway_postgres_url)
+            railway_db = await init_railway_db(settings.railway_postgres_url)
             logger.info("✅ Railway PostgreSQL database initialized")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Railway PostgreSQL database: {e}")
@@ -64,7 +64,7 @@ async def get_neon_db():
     if neon_db is None and settings.neon_db_url:
         try:
             logger.info("🔄 Lazy initializing Neon database...")
-            await init_neon_db(settings.neon_db_url)
+            neon_db = await init_neon_db(settings.neon_db_url)
             logger.info("✅ Neon database initialized")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Neon database: {e}")
