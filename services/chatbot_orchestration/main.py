@@ -858,23 +858,46 @@ async def chat(request: ChatRequest):
             confidence=0.8,  # Default confidence
             data_sources_used=data_sources_used if data_sources_used else ["rag"] if file_context else []
         )
-        
+
+        # Extract usage information from agent result (ensure defined before DB persistence)
+        usage_info = None
+        try:
+            if hasattr(result, 'usage') and result.usage:
+                usage_info = {
+                    "input_tokens": getattr(result.usage, 'input_tokens', 0),
+                    "output_tokens": getattr(result.usage, 'output_tokens', 0),
+                }
+            logger.debug("Usage info extracted: %s", usage_info)
+        except Exception as e:
+            logger.debug("Failed to extract usage info: %s", e)
+
+        # Detailed tracing logs for each major step — helps identify which step failed
+        logger.info("Chat handling progress: building response completed")
+        logger.info("Chat handling progress: response length=%s, sources=%s", len(str(response_data.answer)), len(response_data.sources))
+        logger.info("Chat handling progress: data_sources_used=%s", response_data.data_sources_used)
+
         # Ensure Railway DB is initialized (lazy init) and save message with data source tracking
         try:
+            logger.info("Attempting to initialize Railway DB (lazy)...")
             db = await get_railway_db()
-        except Exception:
-            logger.debug("Railway DB lazy init failed or not configured; skipping DB persistence")
+            logger.info("Railway DB init returned: %s", "connected" if db else "not-configured")
+        except Exception as e:
+            logger.exception("Railway DB lazy init failed: %s", e)
             db = None
 
-        if db:
+        if not db:
+            logger.info("Skipping DB persistence because no DB connection is available")
+        else:
             try:
-                # Get or create session in DB
+                logger.info("DB persistence: checking for existing session row for session_id=%s", session_id)
                 session_db_id = await db.fetchval(
                     "SELECT id FROM chat_sessions WHERE session_id = $1",
                     session_id
                 )
+                logger.info("DB persistence: fetch session_db_id result=%s", session_db_id)
 
                 if not session_db_id:
+                    logger.info("DB persistence: inserting new chat_sessions row for session_id=%s", session_id)
                     session_db_id = await db.fetchval(
                         """
                         INSERT INTO chat_sessions (session_id, is_active, message_count)
@@ -885,56 +908,73 @@ async def chat(request: ChatRequest):
                         True,
                         0
                     )
-                logger.info(f"Chat session DB id: {session_db_id} (session_id={session_id})")
+                    logger.info("DB persistence: inserted chat_sessions id=%s", session_db_id)
+                else:
+                    logger.info("DB persistence: existing chat_sessions id=%s will be used", session_db_id)
 
                 # Save user message
-                await db.execute(
-                    """
-                    INSERT INTO chat_messages (session_id, role, content, used_rag, used_postgres, used_neon_db, used_internet_search)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    """,
-                    session_db_id,
-                    "user",
-                    request.message,
-                    "rag" in data_sources_used,
-                    "postgres" in data_sources_used,
-                    "neon_db" in data_sources_used,
-                    "internet" in data_sources_used
-                )
-                logger.info("Inserted user message into chat_messages for session id %s", session_db_id)
+                try:
+                    logger.info("DB persistence: inserting user message for session_db_id=%s", session_db_id)
+                    await db.execute(
+                        """
+                        INSERT INTO chat_messages (session_id, role, content, used_rag, used_postgres, used_neon_db, used_internet_search)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        """,
+                        session_db_id,
+                        "user",
+                        request.message,
+                        "rag" in response_data.data_sources_used,
+                        "postgres" in response_data.data_sources_used,
+                        "neon_db" in response_data.data_sources_used,
+                        "internet" in response_data.data_sources_used
+                    )
+                    logger.info("DB persistence: user message inserted for session_db_id=%s", session_db_id)
+                except Exception as e:
+                    logger.exception("DB persistence: failed to insert user message for session_db_id=%s: %s", session_db_id, e)
 
                 # Save assistant message
-                await db.execute(
-                    """
-                    INSERT INTO chat_messages (session_id, role, content, used_rag, used_postgres, used_neon_db, used_internet_search, confidence_score, sources, usage_info)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                    """,
-                    session_db_id,
-                    "assistant",
-                    response_data.answer,
-                    "rag" in data_sources_used,
-                    "postgres" in data_sources_used,
-                    "neon_db" in data_sources_used,
-                    "internet" in data_sources_used,
-                    response_data.confidence,
-                    json.dumps([{"file_name": s.file_name, "relevance_score": s.relevance_score} for s in response_data.sources]),
-                    json.dumps(usage_info) if usage_info else None
-                )
-                logger.info("Inserted assistant message into chat_messages for session id %s", session_db_id)
+                try:
+                    logger.info("DB persistence: inserting assistant message for session_db_id=%s", session_db_id)
+                    await db.execute(
+                        """
+                        INSERT INTO chat_messages (session_id, role, content, used_rag, used_postgres, used_neon_db, used_internet_search, confidence_score, sources, usage_info)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        """,
+                        session_db_id,
+                        "assistant",
+                        response_data.answer,
+                        "rag" in response_data.data_sources_used,
+                        "postgres" in response_data.data_sources_used,
+                        "neon_db" in response_data.data_sources_used,
+                        "internet" in response_data.data_sources_used,
+                        response_data.confidence,
+                        json.dumps([{"file_name": s.file_name, "relevance_score": s.relevance_score} for s in response_data.sources]),
+                        json.dumps(usage_info) if usage_info else None
+                    )
+                    logger.info("DB persistence: assistant message inserted for session_db_id=%s", session_db_id)
+                except Exception as e:
+                    logger.exception("DB persistence: failed to insert assistant message for session_db_id=%s: %s", session_db_id, e)
 
                 # Update session message count
-                await db.execute(
-                    "UPDATE chat_sessions SET message_count = message_count + 2, last_activity_at = CURRENT_TIMESTAMP WHERE id = $1",
-                    session_db_id
-                )
+                try:
+                    logger.info("DB persistence: updating chat_sessions message_count for id=%s", session_db_id)
+                    await db.execute(
+                        "UPDATE chat_sessions SET message_count = message_count + 2, last_activity_at = CURRENT_TIMESTAMP WHERE id = $1",
+                        session_db_id
+                    )
+                    logger.info("DB persistence: updated message_count for session_db_id=%s", session_db_id)
+                except Exception as e:
+                    logger.exception("DB persistence: failed to update chat_sessions for session_db_id=%s: %s", session_db_id, e)
+
                 # Confirm messages count in DB for this session
                 try:
                     count = await db.fetchval("SELECT COUNT(*) FROM chat_messages WHERE session_id = $1", session_db_id)
-                    logger.info("Chat messages in DB for session %s: %s", session_db_id, count)
-                except Exception:
-                    logger.debug("Could not fetch chat message count for session %s", session_db_id)
+                    logger.info("DB persistence: chat messages count in DB for session %s: %s", session_db_id, count)
+                except Exception as e:
+                    logger.debug("DB persistence: could not fetch chat message count for session %s: %s", session_db_id, e)
+
             except Exception as e:
-                logger.exception("Failed to save chat message to database: %s", e)
+                logger.exception("DB persistence: unexpected error while saving chat messages: %s", e)
         
         # Update session history
         session["messages"].append({
