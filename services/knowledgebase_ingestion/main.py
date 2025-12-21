@@ -523,8 +523,7 @@ async def upload_document(
         # Step 5: Finalize Response
         duration = time.perf_counter() - start_time
         logger.info(
-            f"Pipeline successful for {original_filename} in {duration:.2f}s", 
-            f"Pipeline successful for {original_filename} in {duration:.2f}s", 
+            f"Pipeline successful for {original_filename} in {duration:.2f}s",
             extra={**log_context, "duration_sec": duration}
         )
 
