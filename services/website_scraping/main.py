@@ -13,7 +13,6 @@ from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
 import tempfile
 from contextlib import asynccontextmanager
 from shared.config import settings
-from shared.config import settings
 
 load_dotenv()
 
@@ -46,6 +45,17 @@ async def lifespan(app: FastAPI):
         logger.info("🚀 Website scraping service started successfully")
         logger.info("🏥 Health check endpoint: /health")
         logger.info("🔗 Scrape endpoint: POST /scrape")
+
+        # Initialize Railway Postgres DB at startup if configured.
+        try:
+            if settings.railway_postgres_url:
+                logger.info("Initializing Railway Postgres DB connection pool...")
+                await shared_db.init_railway_db(settings.railway_postgres_url)
+                logger.info("✅ Railway Postgres DB initialized")
+            else:
+                logger.info("Railway Postgres URL not configured; skipping DB initialization")
+        except Exception as e:
+            logger.exception("Failed to initialize Railway Postgres DB at startup: %s", e)
 
         yield
 
