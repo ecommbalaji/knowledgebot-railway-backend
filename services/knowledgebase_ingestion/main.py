@@ -676,7 +676,7 @@ async def get_file_signed_url(
         r2_key = None
         if db.railway_db:
             # Try to find the file by ID
-                file_record = await db.railway_db.fetchrow(
+            file_record = await db.railway_db.fetchrow(
                 "SELECT cloudflare_r2_key, original_filename FROM file_uploads WHERE id = $1",
                 file_id
             )
