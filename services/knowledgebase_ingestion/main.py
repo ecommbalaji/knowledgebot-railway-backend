@@ -239,9 +239,12 @@ async def get_or_create_user(email: str) -> str:
             True
         )
 
-        return str(user_id) if user_id else None
     except Exception as e:
-        logger.error(f"Error getting/creating user: {e}")
+        logger.error(f"Error getting/creating user with email {email}: {e}")
+        # Try to insert system user if not exists or return default system user ID
+        if settings.default_user_email and email != settings.default_user_email:
+             logger.warning(f"Falling back to default user: {settings.default_user_email}")
+             return await get_or_create_user(settings.default_user_email)
         return None
 
 
@@ -383,8 +386,11 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
             'file_upload', 'file_size_bytes', file_size, 'bytes', 
             user_id, db_record_id, json.dumps({'filename': original_filename})
         )
+        logger.info(f"✅ [DB] Metric 'file_size_bytes' recorded for file {db_record_id}")
     except Exception as e:
-        logger.error(f"❌ [DB] Error recording metadata: {e}")
+        logger.error(f"❌ [DB] Error recording metadata (metrics might be missing): {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         
     return db_record_id
 
@@ -452,6 +458,13 @@ async def upload_document(
             file.content_type or "application/octet-stream", email
         )
         logger.info(f"R2 Persistence complete. Key: {r2_key}", extra=log_context)
+        
+        # Track R2 Usage
+        if r2_storage:
+             await _record_api_usage(
+                user_id, "cloudflare_r2", "put_object", "PUT", 200, 
+                file_size, 0, 0, {"key": r2_key}
+             )
 
         # Step 3: Process with Gemini (AI Processing)
         logger.info("Sending file to Gemini FileSearch API...", extra=log_context)
@@ -459,6 +472,12 @@ async def upload_document(
             tmp_path, file_display_name, file.content_type or "application/octet-stream"
         )
         logger.info(f"Gemini processing finished. State: {final_state}", extra=log_context)
+        
+        # Track Gemini Usage
+        await _record_api_usage(
+            user_id, "gemini", "files.upload", "POST", 200,
+            file_size, 0, 0, {"file_name": uploaded_file.name}
+        )
 
         # Step 4: Record Metadata (PostgreSQL)
         logger.info("Recording final metadata to PostgreSQL...", extra=log_context)
@@ -473,7 +492,14 @@ async def upload_document(
         duration = time.perf_counter() - start_time
         logger.info(
             f"Pipeline successful for {original_filename} in {duration:.2f}s", 
+            f"Pipeline successful for {original_filename} in {duration:.2f}s", 
             extra={**log_context, "duration_sec": duration}
+        )
+
+        # Track Internal API Usage
+        await _record_api_usage(
+            user_id, "internal", "/upload", "POST", 200,
+            file_size, 0, int(duration * 1000), {"filename": original_filename}
         )
 
         return UploadResponse(
