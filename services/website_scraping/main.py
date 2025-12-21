@@ -211,10 +211,30 @@ async def scrape_website(request: ScrapeRequest):
                 
                 # Upload to Gemini FileSearch
                 logger.info(f"Uploading scraped content to Gemini FileSearch: {display_name}")
-                uploaded_file = genai_client.files.upload(
-                    path=tmp_path,
-                    config=dict(display_name=display_name)
-                )
+                # Use `file=` (library expects file param) and add simple retry/backoff for rate limits
+                uploaded_file = None
+                for attempt in range(3):
+                    try:
+                        uploaded_file = genai_client.files.upload(
+                            file=tmp_path,
+                            config=dict(display_name=display_name, mime_type="text/markdown")
+                        )
+                        break
+                    except Exception as e:
+                        err_text = str(e)
+                        if '429' in err_text or 'RESOURCE_EXHAUSTED' in err_text or 'Too Many Requests' in err_text:
+                            wait = 2 ** attempt
+                            logger.warning(f"Gemini upload attempt {attempt+1} failed (rate limit). Retrying in {wait}s: {e}")
+                            await asyncio.sleep(wait)
+                            continue
+                        else:
+                            logger.error(f"Error uploading to Gemini: {e}")
+                            raise
+
+                if not uploaded_file:
+                    logger.error("Gemini FileSearch upload failed after retries")
+                    from shared.utils import dependency_unavailable_error
+                    raise dependency_unavailable_error("gemini", "File upload failed or quota exceeded")
                 
                 # Wait for file processing
                 logger.info(f"Uploaded file: {uploaded_file.name}, waiting for processing...")
