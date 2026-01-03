@@ -1358,8 +1358,8 @@ async def delete_file(file_id: str):
     # (file may have been already deleted from Gemini or expired)
     db_success = deletion_results.get("postgres", {}).get("success", False)
     gemini_success = deletion_results.get("gemini", {}).get("success", False)
-    gemini_error = deletion_results.get("gemini", {}).get("error", "")
-    is_gemini_not_found = "not found" in gemini_error.lower() or "permission_denied" in gemini_error.lower()
+    gemini_error = deletion_results.get("gemini", {}).get("error")
+    is_gemini_not_found = gemini_error and ("not found" in gemini_error.lower() or "permission_denied" in gemini_error.lower())
     
     if db_success:
         # Database deletion succeeded - this is the most important
