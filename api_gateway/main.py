@@ -731,6 +731,31 @@ async def knowledgebase_upload_endpoint(
             logger.debug("🧹 File content cleaned from memory")
 
 
+@app.get("/api/v1/knowledgebase/upload/constraints")
+async def knowledgebase_upload_constraints_endpoint(request: Request):
+    """Route upload constraints requests to knowledgebase ingestion service."""
+    try:
+        url = f"{KNOWLEDGEBASE_INGESTION_URL}/upload/constraints"
+
+        headers = dict(request.headers)
+        # Remove hop-by-hop and problematic headers
+        hop_by_hop_headers = [
+            'connection', 'keep-alive', 'proxy-authenticate',
+            'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
+        ]
+        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, headers=headers, timeout=10.0)
+            return JSONResponse(
+                status_code=resp.status_code,
+                content=resp.json() if resp.headers.get('content-type', '').startswith('application/json') else resp.text
+            )
+    except Exception as e:
+        logger.error(f"Error routing upload constraints request: {e}")
+        raise HTTPException(status_code=500, detail=f"Knowledgebase service error: {str(e)}")
+
+
 @app.get("/api/v1/knowledgebase/files")
 async def knowledgebase_files_endpoint(request: Request):
     """Route knowledgebase files list requests to knowledgebase ingestion service."""
