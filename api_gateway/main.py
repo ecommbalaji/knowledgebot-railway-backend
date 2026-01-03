@@ -864,6 +864,48 @@ async def knowledgebase_file_download_endpoint(
         raise HTTPException(status_code=500, detail=f"Knowledgebase service error: {str(e)}")
 
 
+@app.delete("/api/v1/knowledgebase/files/{file_name}")
+async def knowledgebase_file_delete_endpoint(
+    file_name: str,
+    request: Request
+):
+    """Route file deletion requests to knowledgebase ingestion service.
+    
+    Deletes a file from Gemini FileSearch, R2 storage, and database.
+    """
+    try:
+        url = f"{KNOWLEDGEBASE_INGESTION_URL}/files/{file_name}"
+        logger.info(f"🗑️ Forwarding delete request for file: {file_name} to {url}")
+
+        headers = dict(request.headers)
+        # Remove hop-by-hop headers and problematic ones
+        hop_by_hop_headers = [
+            'connection', 'keep-alive', 'proxy-authenticate',
+            'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
+        ]
+        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.delete(url, headers=headers, timeout=30.0)
+            
+            logger.info(f"🗑️ Delete response status: {resp.status_code}")
+            
+            response_content = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {"detail": resp.text}
+            
+            if resp.status_code == 200:
+                logger.info(f"✅ File {file_name} deleted successfully")
+            else:
+                logger.warning(f"⚠️ Delete returned status {resp.status_code}: {response_content}")
+            
+            return JSONResponse(
+                status_code=resp.status_code,
+                content=response_content
+            )
+    except Exception as e:
+        logger.error(f"Error routing delete request for file {file_name}: {e}")
+        raise HTTPException(status_code=500, detail=f"Knowledgebase service error: {str(e)}")
+
+
 @app.post("/api/v1/scrape")
 async def scrape_endpoint(scrape_request: ScrapeRequest, request: Request):
     """Route scraping requests to website scraping service."""
