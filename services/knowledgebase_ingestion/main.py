@@ -1386,10 +1386,16 @@ async def download_file(
 async def delete_file(file_name: str):
     """Delete a file from Gemini FileSearch, R2 storage, and database.
     
+    This function attempts to delete from all three storage layers independently.
+    If one fails, it continues with the others (no rollback).
+    
     Args:
         file_name: The Gemini file name. Can be:
             - Full format: 'files/xyz123'
             - Short format: 'xyz123' (will be prefixed with 'files/')
+    
+    Returns:
+        Dict with success status and details of what was deleted/failed
     """
     if not genai_client:
         from shared.utils import dependency_unavailable_error
@@ -1400,55 +1406,111 @@ async def delete_file(file_name: str):
     if not file_name.startswith("files/"):
         gemini_file_name = f"files/{file_name}"
     
-    logger.info(f"Delete request for file: {file_name} -> normalized to: {gemini_file_name}")
+    logger.info(f"🗑️ Delete request for file: {file_name} -> normalized to: {gemini_file_name}")
 
+    # Track deletion results for each storage layer
+    deletion_results = {
+        "gemini": {"success": False, "error": None},
+        "r2": {"success": False, "error": None},
+        "postgres": {"success": False, "error": None}
+    }
+
+    # Step 1: Delete from Gemini FileSearch (no rollback on failure)
     try:
-        # First, delete from Gemini FileSearch
-        try:
-            genai_client.files.delete(name=gemini_file_name)
-            logger.info(f"Deleted file from Gemini FileSearch: {gemini_file_name}")
-        except Exception as e:
-            logger.warning(f"Failed to delete from Gemini FileSearch: {e}")
-
-        # Delete from Cloudflare R2 if configured and we have the key
-        if r2_storage and db.railway_db:
-            try:
-                # Get R2 key from database - use normalized name
-                file_record = await db.railway_db.fetchrow(
-                    "SELECT cloudflare_r2_key FROM file_uploads WHERE gemini_file_name = $1",
-                    gemini_file_name
-                )
-
-                if file_record and file_record['cloudflare_r2_key']:
-                    await r2_storage.delete_file(file_record['cloudflare_r2_key'])
-                    logger.info(f"Deleted file from R2 storage: {file_record['cloudflare_r2_key']}")
-            except Exception as e:
-                logger.warning(f"Failed to delete from R2 storage: {e}")
-
-        # Delete from database (both file_uploads and potentially scraped_websites)
-        if db.railway_db:
-            try:
-                # Delete from file_uploads - use normalized name
-                deleted_uploads = await db.railway_db.execute(
-                    "DELETE FROM file_uploads WHERE gemini_file_name = $1",
-                    gemini_file_name
-                )
-
-                # Also check scraped_websites in case it's a scraped website - use normalized name
-                deleted_scraped = await db.railway_db.execute(
-                    "DELETE FROM scraped_websites WHERE gemini_file_name = $1",
-                    gemini_file_name
-                )
-
-                logger.info(f"Deleted from database: {deleted_uploads} file uploads, {deleted_scraped} scraped websites")
-            except Exception as e:
-                logger.warning(f"Failed to delete from database: {e}")
-
-        return {"success": True, "message": f"File {gemini_file_name} deleted from all storage layers"}
-
+        genai_client.files.delete(name=gemini_file_name)
+        deletion_results["gemini"]["success"] = True
+        logger.info(f"✅ Deleted file from Gemini FileSearch: {gemini_file_name}")
     except Exception as e:
-        logger.error(f"Error deleting file: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
+        deletion_results["gemini"]["error"] = str(e)
+        logger.warning(f"⚠️ Failed to delete from Gemini FileSearch: {e} (continuing with other deletions)")
+
+    # Step 2: Delete from Cloudflare R2 (no rollback on failure)
+    r2_key = None
+    if r2_storage and db.railway_db:
+        try:
+            # Get R2 key from database - try both file_uploads and scraped_websites
+            file_record = await db.railway_db.fetchrow(
+                """
+                SELECT cloudflare_r2_key FROM file_uploads WHERE gemini_file_name = $1
+                UNION ALL
+                SELECT cloudflare_r2_key FROM scraped_websites WHERE gemini_file_name = $1
+                LIMIT 1
+                """,
+                gemini_file_name
+            )
+
+            if file_record and file_record.get('cloudflare_r2_key'):
+                r2_key = file_record['cloudflare_r2_key']
+                await r2_storage.delete_file(r2_key)
+                deletion_results["r2"]["success"] = True
+                logger.info(f"✅ Deleted file from R2 storage: {r2_key}")
+            else:
+                logger.info(f"ℹ️ No R2 key found for {gemini_file_name}, skipping R2 deletion")
+        except Exception as e:
+            deletion_results["r2"]["error"] = str(e)
+            logger.warning(f"⚠️ Failed to delete from R2 storage: {e} (continuing with database deletion)")
+
+    # Step 3: Delete from database (no rollback on failure)
+    if db.railway_db:
+        try:
+            # Delete from file_uploads
+            deleted_uploads = await db.railway_db.execute(
+                "DELETE FROM file_uploads WHERE gemini_file_name = $1",
+                gemini_file_name
+            )
+
+            # Delete from scraped_websites
+            deleted_scraped = await db.railway_db.execute(
+                "DELETE FROM scraped_websites WHERE gemini_file_name = $1",
+                gemini_file_name
+            )
+
+            deletion_results["postgres"]["success"] = True
+            logger.info(f"✅ Deleted from database: {deleted_uploads} file uploads, {deleted_scraped} scraped websites")
+        except Exception as e:
+            deletion_results["postgres"]["error"] = str(e)
+            logger.warning(f"⚠️ Failed to delete from database: {e}")
+
+    # Determine overall success (at least one deletion succeeded)
+    overall_success = any(result["success"] for result in deletion_results.values())
+    
+    # Build response message
+    success_parts = []
+    failed_parts = []
+    
+    if deletion_results["gemini"]["success"]:
+        success_parts.append("Gemini")
+    elif deletion_results["gemini"]["error"]:
+        failed_parts.append(f"Gemini: {deletion_results['gemini']['error']}")
+    
+    if deletion_results["r2"]["success"]:
+        success_parts.append("R2")
+    elif deletion_results["r2"]["error"]:
+        failed_parts.append(f"R2: {deletion_results['r2']['error']}")
+    
+    if deletion_results["postgres"]["success"]:
+        success_parts.append("PostgreSQL")
+    elif deletion_results["postgres"]["error"]:
+        failed_parts.append(f"PostgreSQL: {deletion_results['postgres']['error']}")
+
+    message = f"File {gemini_file_name} deletion: "
+    if success_parts:
+        message += f"Deleted from {', '.join(success_parts)}"
+    if failed_parts:
+        message += f". Failed: {'; '.join(failed_parts)}"
+
+    if overall_success:
+        return {
+            "success": True,
+            "message": message,
+            "details": deletion_results
+        }
+    else:
+        # All deletions failed
+        raise HTTPException(
+            status_code=500,
+            detail=message
+        )
 
 
 if __name__ == "__main__":
