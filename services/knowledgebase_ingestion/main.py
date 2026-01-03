@@ -335,6 +335,73 @@ def sanitize_filename(filename: str) -> str:
     return filename
 
 
+def detect_mime_type_from_extension(filename: str, provided_mime_type: Optional[str] = None) -> str:
+    """Detect proper MIME type from file extension, falling back to provided type or default."""
+    import mimetypes
+    
+    # If provided MIME type is valid and not generic, use it
+    if provided_mime_type and provided_mime_type != "application/octet-stream":
+        return provided_mime_type
+    
+    # Map file extensions to MIME types (Gemini-compatible)
+    extension_to_mime = {
+        # Documents
+        'pdf': 'application/pdf',
+        'doc': 'application/msword',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'txt': 'text/plain',
+        'rtf': 'application/rtf',
+        'odt': 'application/vnd.oasis.opendocument.text',
+        # Presentations
+        'ppt': 'application/vnd.ms-powerpoint',
+        'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'odp': 'application/vnd.oasis.opendocument.presentation',
+        # Spreadsheets
+        'xls': 'application/vnd.ms-excel',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'csv': 'text/csv',
+        'ods': 'application/vnd.oasis.opendocument.spreadsheet',
+        # Images
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'bmp': 'image/bmp',
+        'svg': 'image/svg+xml',
+        # Audio
+        'mp3': 'audio/mpeg',
+        'wav': 'audio/wav',
+        'ogg': 'audio/ogg',
+        'flac': 'audio/flac',
+        'm4a': 'audio/mp4',
+        # Code/Text
+        'html': 'text/html',
+        'htm': 'text/html',
+        'json': 'application/json',
+        'xml': 'application/xml',
+        'yaml': 'application/x-yaml',
+        'yml': 'application/x-yaml',
+        'md': 'text/markdown',
+        'markdown': 'text/markdown',
+    }
+    
+    # Extract extension
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    
+    # Use our mapping first
+    if ext in extension_to_mime:
+        return extension_to_mime[ext]
+    
+    # Fallback to mimetypes library
+    guessed_type, _ = mimetypes.guess_type(filename)
+    if guessed_type:
+        return guessed_type
+    
+    # Last resort: return provided type or default
+    return provided_mime_type or "application/octet-stream"
+
+
 async def check_duplicate_file(sha256_hash: str, original_filename: str) -> Optional[Dict[str, Any]]:
     """Check if a file with the same hash or name already exists."""
     if not db.railway_db:
@@ -561,14 +628,27 @@ async def _persist_to_r2(tmp_path: str, original_filename: str, file_display_nam
     return r2_result, r2_key, r2_url
 
 
-async def _process_with_gemini(tmp_path: str, file_display_name: str, content_type: str):
-    """Upload to Gemini FileSearch and poll for processing completion."""
-    logger.info(f"🤖 [GEMINI] Uploading {file_display_name} to FileSearch...")
+async def _process_with_gemini(tmp_path: str, file_display_name: str, original_filename: str, mime_type: str):
+    """Upload to Gemini FileSearch and poll for processing completion.
+    
+    Args:
+        tmp_path: Path to temporary file
+        file_display_name: Display name for the file
+        original_filename: Original filename (for logging)
+        mime_type: Detected MIME type (should already be properly detected)
+    """
+    # Double-check MIME type is not generic (fallback safety)
+    final_mime_type = detect_mime_type_from_extension(original_filename, mime_type)
+    
+    if final_mime_type != mime_type:
+        logger.warning(f"⚠️ [GEMINI] MIME type correction: {mime_type} -> {final_mime_type}")
+    
+    logger.info(f"🤖 [GEMINI] Uploading {file_display_name} to FileSearch with MIME type: {final_mime_type}...")
     uploaded_file = genai_client.files.upload(
         file=tmp_path,
         config=dict(
             display_name=file_display_name,
-            mime_type=content_type
+            mime_type=final_mime_type
         )
     )
     
@@ -603,7 +683,7 @@ async def _process_with_gemini(tmp_path: str, file_display_name: str, content_ty
 async def _record_metadata(user_id: str, original_filename: str, file_display_name: str, 
                          file_ext: str, r2_url: str, r2_key: str, uploaded_file: Any, 
                          file_size: int, sha256_hash: str, r2_result: Any, 
-                         final_state: str, gemini_processed_at: Any, version: int = 1):
+                         final_state: str, gemini_processed_at: Any, mime_type: str, version: int = 1):
     """Persist file metadata and metrics to the PostgreSQL database."""
     db_record_id = None
     if not db.railway_db:
@@ -632,7 +712,7 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
             r2_key,
             uploaded_file.name,
             getattr(uploaded_file, 'uri', None),
-            uploaded_file.mime_type or "application/octet-stream",
+            mime_type,
             file_size,
             sha256_hash,
             'completed' if r2_result else 'skipped',
@@ -758,6 +838,11 @@ async def upload_document(
         log_context["sha256"] = sha256_hash
         logger.info(f"File streamed. Size: {file_size} bytes, Hash: {sha256_hash}", extra=log_context)
         
+        # Detect proper MIME type from filename (important for Gemini compatibility)
+        detected_mime_type = detect_mime_type_from_extension(original_filename, file.content_type)
+        if detected_mime_type != (file.content_type or "application/octet-stream"):
+            logger.info(f"🔍 MIME type detected: {file.content_type or 'None'} -> {detected_mime_type} (from extension)", extra=log_context)
+        
         # ====================================================================
         # VALIDATE FILE SIZE (after streaming to know actual size)
         # ====================================================================
@@ -826,7 +911,7 @@ async def upload_document(
             logger.info("Persisting file to Cloudflare R2...", extra=log_context)
             r2_result, r2_key, r2_url = await _persist_to_r2(
                 tmp_path, original_filename, file_display_name, 
-                file.content_type or "application/octet-stream", email
+                detected_mime_type, email
             )
             r2_key_created = r2_key  # Track for potential rollback
             logger.info(f"R2 Persistence complete. Key: {r2_key}", extra=log_context)
@@ -848,7 +933,7 @@ async def upload_document(
         try:
             logger.info("Sending file to Gemini FileSearch API...", extra=log_context)
             uploaded_file, final_state, gemini_processed_at = await _process_with_gemini(
-                tmp_path, file_display_name, file.content_type or "application/octet-stream"
+                tmp_path, file_display_name, original_filename, detected_mime_type
             )
             gemini_file_created = uploaded_file.name  # Track for potential rollback
             logger.info(f"Gemini processing finished. State: {final_state}", extra=log_context)
@@ -881,7 +966,7 @@ async def upload_document(
             db_record_id = await _record_metadata(
                 user_id, original_filename, file_display_name, file_ext,
                 r2_url, r2_key, uploaded_file, file_size, sha256_hash,
-                r2_result, final_state, gemini_processed_at, version=file_version
+                r2_result, final_state, gemini_processed_at, detected_mime_type, version=file_version
             )
         except Exception as db_error:
             logger.error(f"❌ PostgreSQL Record Failed: {db_error}", exc_info=True, extra=log_context)
