@@ -206,6 +206,7 @@ class ScrapeRequest(BaseModel):
     wait_for: Optional[str] = Field(None, max_length=200, description="CSS selector to wait for")
     js_code: Optional[str] = Field(None, max_length=5000, description="JavaScript to execute")
     screenshot: Optional[bool] = Field(False, description="Take screenshot of page")
+    replace_existing: Optional[bool] = Field(False, description="Replace existing website if duplicate found")
     
     @validator('url')
     def validate_url_format(cls, v):
@@ -270,8 +271,50 @@ async def scrape_website(request: ScrapeRequest):
         if request.max_pages and request.max_pages > 20:
             validation_warnings.append(f"Scraping {request.max_pages} pages may take a long time")
         
+        # Check for duplicate website
+        existing_version = 1
+        if shared_db.railway_db:
+            existing_website = await shared_db.railway_db.fetchrow(
+                """
+                SELECT id, original_url, gemini_file_name, COALESCE(version, 1) as version
+                FROM scraped_websites 
+                WHERE original_url = $1 OR domain = $2
+                ORDER BY version DESC, created_at DESC
+                LIMIT 1
+                """,
+                request.url, domain
+            )
+            
+            if existing_website and not request.replace_existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": f"Website '{request.url}' has already been scraped (Version {existing_website['version']}). Set replace_existing=true to re-scrape.",
+                        "existing_url": existing_website['original_url'],
+                        "version": existing_website['version'],
+                        "suggestion": "Set replace_existing=true to create a new version"
+                    }
+                )
+            
+            if existing_website and request.replace_existing:
+                existing_version = existing_website['version'] + 1
+                logger.info(f"Replacing existing website: {existing_website['original_url']} (version {existing_website['version']} -> {existing_version})")
+                # Delete the old Gemini file
+                if existing_website['gemini_file_name'] and genai_client:
+                    try:
+                        genai_client.files.delete(name=existing_website['gemini_file_name'])
+                        logger.info(f"Deleted old Gemini file: {existing_website['gemini_file_name']}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old Gemini file: {e}")
+                # Delete old database record
+                await shared_db.railway_db.execute(
+                    "DELETE FROM scraped_websites WHERE id = $1",
+                    existing_website['id']
+                )
+                logger.info(f"Deleted old database record: {existing_website['id']}")
+        
         # Scrape the website using Crawl4AI
-        logger.info(f"Scraping website: {request.url}")
+        logger.info(f"Scraping website: {request.url} (version {existing_version})")
         
         # Configure browser
         browser_config = BrowserConfig(verbose=False, headless=True)
@@ -406,8 +449,8 @@ async def scrape_website(request: ScrapeRequest):
                                 user_id, original_url, domain, title,
                                 content_length, pages_scraped,
                                 gemini_file_name, gemini_file_uri, mime_type, size_bytes,
-                                gemini_state, scraping_config, metadata
-                            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                                gemini_state, scraping_config, metadata, version
+                            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
                             """,
                             None,
                             request.url,
@@ -421,9 +464,10 @@ async def scrape_website(request: ScrapeRequest):
                             size_bytes,
                             file_info.get('state'),
                             json.dumps(scraping_cfg),
-                            json.dumps({"scraped_urls": scraped_urls})
+                            json.dumps({"scraped_urls": scraped_urls}),
+                            existing_version
                         )
-                        logger.info("Persisted scraped website metadata to database")
+                        logger.info(f"Persisted scraped website metadata to database (version {existing_version})")
                 except Exception as e:
                     logger.exception("Failed to persist scraped website metadata: %s", e)
 

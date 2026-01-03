@@ -344,10 +344,11 @@ async def check_duplicate_file(sha256_hash: str, original_filename: str) -> Opti
         # Check by hash first (exact duplicate)
         existing = await db.railway_db.fetchrow(
             """
-            SELECT id, original_filename, display_name, sha256_hash, size_bytes, gemini_file_name
+            SELECT id, original_filename, display_name, sha256_hash, size_bytes, gemini_file_name,
+                   COALESCE(version, 1) as version
             FROM file_uploads 
             WHERE sha256_hash = $1
-            ORDER BY created_at DESC
+            ORDER BY version DESC, created_at DESC
             LIMIT 1
             """,
             sha256_hash
@@ -361,16 +362,18 @@ async def check_duplicate_file(sha256_hash: str, original_filename: str) -> Opti
                 "sha256_hash": existing['sha256_hash'],
                 "size_bytes": existing['size_bytes'],
                 "gemini_file_name": existing['gemini_file_name'],
+                "version": existing['version'],
                 "match_type": "hash"
             }
         
         # Check by filename (same name, different content)
         existing_by_name = await db.railway_db.fetchrow(
             """
-            SELECT id, original_filename, display_name, sha256_hash, size_bytes, gemini_file_name
+            SELECT id, original_filename, display_name, sha256_hash, size_bytes, gemini_file_name,
+                   COALESCE(version, 1) as version
             FROM file_uploads 
             WHERE original_filename = $1
-            ORDER BY created_at DESC
+            ORDER BY version DESC, created_at DESC
             LIMIT 1
             """,
             original_filename
@@ -384,6 +387,7 @@ async def check_duplicate_file(sha256_hash: str, original_filename: str) -> Opti
                 "sha256_hash": existing_by_name['sha256_hash'],
                 "size_bytes": existing_by_name['size_bytes'],
                 "gemini_file_name": existing_by_name['gemini_file_name'],
+                "version": existing_by_name['version'],
                 "match_type": "filename"
             }
         
@@ -599,7 +603,7 @@ async def _process_with_gemini(tmp_path: str, file_display_name: str, content_ty
 async def _record_metadata(user_id: str, original_filename: str, file_display_name: str, 
                          file_ext: str, r2_url: str, r2_key: str, uploaded_file: Any, 
                          file_size: int, sha256_hash: str, r2_result: Any, 
-                         final_state: str, gemini_processed_at: Any):
+                         final_state: str, gemini_processed_at: Any, version: int = 1):
     """Persist file metadata and metrics to the PostgreSQL database."""
     db_record_id = None
     if not db.railway_db:
@@ -607,7 +611,7 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
         return None
 
     try:
-        logger.info(f"🗄️ [DB] Saving metadata for {original_filename}")
+        logger.info(f"🗄️ [DB] Saving metadata for {original_filename} (version {version})")
         db_record_id = await db.railway_db.fetchval(
             """
             INSERT INTO file_uploads (
@@ -615,9 +619,9 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
                 cloudflare_r2_url, cloudflare_r2_key, gemini_file_name, gemini_file_uri,
                 mime_type, size_bytes, sha256_hash,
                 r2_upload_status, gemini_upload_status, gemini_state,
-                gemini_processed_at, expires_at, metadata
+                gemini_processed_at, expires_at, metadata, version
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             RETURNING id
             """,
             user_id,
@@ -636,9 +640,10 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
             final_state,
             gemini_processed_at,
             uploaded_file.expiration_time if hasattr(uploaded_file, 'expiration_time') else None,
-            json.dumps({'r2_uploaded': r2_result is not None, 'gemini_file_id': uploaded_file.name})
+            json.dumps({'r2_uploaded': r2_result is not None, 'gemini_file_id': uploaded_file.name}),
+            version
         )
-        logger.info(f"✅ [DB] Record created with ID: {db_record_id}")
+        logger.info(f"✅ [DB] Record created with ID: {db_record_id} (version {version})")
         
         # Log metric
         await db.railway_db.execute(
@@ -801,13 +806,16 @@ async def upload_document(
             
             # Replace existing file if requested
             if replace_existing:
-                logger.info(f"Replacing existing file: {existing_file['gemini_file_name']}", extra=log_context)
+                existing_version = existing_file.get('version', 1)
+                new_version = existing_version + 1
+                logger.info(f"Replacing existing file: {existing_file['gemini_file_name']} (version {existing_version} -> {new_version})", extra=log_context)
                 await delete_existing_file(
                     existing_file.get('gemini_file_name'),
                     existing_file.get('r2_key'),
                     existing_file.get('id')
                 )
                 replaced_existing = True
+                log_context["new_version"] = new_version
 
         # Step 2: Persist to R2 (Cloud Storage)
         logger.info("Persisting file to Cloudflare R2...", extra=log_context)
@@ -838,12 +846,14 @@ async def upload_document(
         )
 
         # Step 4: Record Metadata (PostgreSQL)
-        logger.info("Recording final metadata to PostgreSQL...", extra=log_context)
+        # Determine version: increment if replacing, else default to 1
+        file_version = log_context.get("new_version", 1)
+        logger.info(f"Recording final metadata to PostgreSQL (version {file_version})...", extra=log_context)
         file_ext = os.path.splitext(original_filename)[1] or ".bin"
         db_record_id = await _record_metadata(
             user_id, original_filename, file_display_name, file_ext,
             r2_url, r2_key, uploaded_file, file_size, sha256_hash,
-            r2_result, final_state, gemini_processed_at
+            r2_result, final_state, gemini_processed_at, version=file_version
         )
 
         # Step 5: Finalize Response
