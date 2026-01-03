@@ -864,7 +864,7 @@ async def knowledgebase_file_download_endpoint(
         raise HTTPException(status_code=500, detail=f"Knowledgebase service error: {str(e)}")
 
 
-@app.delete("/api/v1/knowledgebase/files/{file_name}")
+@app.delete("/api/v1/knowledgebase/files/{file_name:path}")
 async def knowledgebase_file_delete_endpoint(
     file_name: str,
     request: Request
@@ -872,6 +872,7 @@ async def knowledgebase_file_delete_endpoint(
     """Route file deletion requests to knowledgebase ingestion service.
     
     Deletes a file from Gemini FileSearch, R2 storage, and database.
+    The file_name can include slashes (e.g., 'files/xyz123').
     """
     try:
         url = f"{KNOWLEDGEBASE_INGESTION_URL}/files/{file_name}"

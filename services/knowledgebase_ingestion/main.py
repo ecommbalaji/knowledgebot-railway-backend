@@ -1227,9 +1227,13 @@ async def download_file(
         raise HTTPException(status_code=500, detail=f"Failed to download file: {str(e)}")
 
 
-@app.delete("/files/{file_name}")
+@app.delete("/files/{file_name:path}")
 async def delete_file(file_name: str):
-    """Delete a file from Gemini FileSearch, R2 storage, and database."""
+    """Delete a file from Gemini FileSearch, R2 storage, and database.
+    
+    Args:
+        file_name: The Gemini file name (e.g., 'files/xyz123' or just 'xyz123')
+    """
     if not genai_client:
         from shared.utils import dependency_unavailable_error
         raise dependency_unavailable_error("gemini", "client not configured")
