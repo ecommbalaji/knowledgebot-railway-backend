@@ -59,7 +59,6 @@ ALLOWED_MIME_TYPES = {
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from shared.config import settings
 from shared import db
-from shared.r2_storage import R2Storage
 
 load_dotenv()
 
@@ -218,23 +217,7 @@ else:
         genai_client = None
         logger.error(f"❌ Failed to initialize Gemini client: {e}")
 
-# Initialize R2 Storage (optional)
-r2_storage: Optional[R2Storage] = None
-r2_config_value = settings.cloudflare_r2_url
-logger.info(f"R2 config from settings: {'SET' if r2_config_value else 'NOT SET'}")
-
-if r2_config_value:
-    logger.info(f"R2 connection string: {r2_config_value[:50]}...")  # Log first 50 chars for debugging
-    try:
-        r2_storage = R2Storage(r2_config_value)
-        logger.info("✅ R2 storage initialized successfully")
-        logger.info(f"R2 bucket: {r2_storage.bucket_name}")
-        logger.info(f"R2 public URL: {r2_storage.public_url or 'Not configured'}")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize R2 storage: {e}")
-        logger.error(f"Error type: {type(e).__name__}")
-else:
-    logger.info("ℹ️  R2 storage not configured (cloudflare_r2_url not set)")
+# R2 storage removed - files go directly to Gemini
 
 class FileInfo(BaseModel):
     name: str
@@ -247,8 +230,6 @@ class FileInfo(BaseModel):
     sha256_hash: Optional[str] = None
     uri: Optional[str] = None
     state: Optional[str] = None
-    r2_url: Optional[str] = None
-    r2_key: Optional[str] = None
     db_record_id: Optional[str] = None
     source: Optional[str] = None  # 'upload' or 'scrape'
     original_filename: Optional[str] = None
@@ -461,8 +442,8 @@ async def check_duplicate_file(sha256_hash: str, original_filename: str) -> Opti
         return None
 
 
-async def delete_existing_file(gemini_file_name: str, r2_key: Optional[str], db_id: str):
-    """Delete an existing file from all storage layers."""
+async def delete_existing_file(gemini_file_name: str, db_id: str):
+    """Delete an existing file from Gemini and database."""
     try:
         # Delete from Gemini
         if genai_client and gemini_file_name:
@@ -471,14 +452,6 @@ async def delete_existing_file(gemini_file_name: str, r2_key: Optional[str], db_
                 logger.info(f"Deleted old file from Gemini: {gemini_file_name}")
             except Exception as e:
                 logger.warning(f"Failed to delete from Gemini: {e}")
-        
-        # Delete from R2
-        if r2_storage and r2_key:
-            try:
-                await r2_storage.delete_file(r2_key)
-                logger.info(f"Deleted old file from R2: {r2_key}")
-            except Exception as e:
-                logger.warning(f"Failed to delete from R2: {e}")
         
         # Delete from database
         if db.railway_db:
@@ -628,32 +601,7 @@ async def _stream_to_temp_file(file: UploadFile, original_filename: str) -> tupl
         return tmp_path, file_size
 
 
-async def _persist_to_r2(tmp_path: str, original_filename: str, file_display_name: str, 
-                        content_type: str, email: str):
-    """Upload a file to Cloudflare R2 if configured."""
-    r2_result, r2_key, r2_url = None, None, None
-    
-    if r2_storage:
-        logger.info(f"☁️ [R2] Initiating upload for {original_filename}")
-        try:
-            r2_result = await r2_storage.upload_file(
-                file_path=tmp_path,
-                content_type=content_type,
-                metadata={
-                    'original_filename': original_filename,
-                    'display_name': file_display_name,
-                    'uploaded_by': email
-                }
-            )
-            r2_key = r2_result.get('key')
-            r2_url = r2_result.get('url')
-            logger.info(f"✅ [R2] Upload successful. Key: {r2_key}")
-        except Exception as e:
-            logger.warning(f"⚠️ [R2] Upload failed, but continuing: {e}")
-    else:
-        logger.info("ℹ️ [R2] Skipping - Storage not configured")
-        
-    return r2_result, r2_key, r2_url
+# R2 storage removed - files go directly to Gemini
 
 
 async def _process_with_gemini(tmp_path: str, file_display_name: str, original_filename: str, mime_type: str):
@@ -719,8 +667,8 @@ async def _process_with_gemini(tmp_path: str, file_display_name: str, original_f
 
 
 async def _record_metadata(user_id: str, original_filename: str, file_display_name: str, 
-                         file_ext: str, r2_url: str, r2_key: str, uploaded_file: Any, 
-                         file_size: int, sha256_hash: str, r2_result: Any, 
+                         file_ext: str, uploaded_file: Any, 
+                         file_size: int, sha256_hash: str, 
                          final_state: str, gemini_processed_at: Any, mime_type: str, version: int = 1):
     """Persist file metadata and metrics to the PostgreSQL database."""
     db_record_id = None
@@ -734,31 +682,28 @@ async def _record_metadata(user_id: str, original_filename: str, file_display_na
             """
             INSERT INTO file_uploads (
                 user_id, original_filename, display_name, file_extension,
-                cloudflare_r2_url, cloudflare_r2_key, gemini_file_name, gemini_file_uri,
+                gemini_file_name, gemini_file_uri,
                 mime_type, size_bytes, sha256_hash,
-                r2_upload_status, gemini_upload_status, gemini_state,
+                gemini_upload_status, gemini_state,
                 gemini_processed_at, expires_at, metadata, version
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING id
             """,
             user_id,
             original_filename,
             file_display_name,
             file_ext.lstrip('.'),
-            r2_url,
-            r2_key,
             uploaded_file.name,
             getattr(uploaded_file, 'uri', None),
             mime_type,
             file_size,
             sha256_hash,
-            'completed' if r2_result else 'skipped',
             final_state.lower(),
             final_state,
             gemini_processed_at,
             uploaded_file.expiration_time if hasattr(uploaded_file, 'expiration_time') else None,
-            json.dumps({'r2_uploaded': r2_result is not None, 'gemini_file_id': uploaded_file.name}),
+            json.dumps({'gemini_file_id': uploaded_file.name}),
             version
         )
         logger.info(f"✅ [DB] Record created with ID: {db_record_id} (version {version})")
@@ -936,40 +881,15 @@ async def upload_document(
                 logger.info(f"Replacing existing file: {existing_file['gemini_file_name']} (version {existing_version} -> {new_version})", extra=log_context)
                 await delete_existing_file(
                     existing_file.get('gemini_file_name'),
-                    existing_file.get('r2_key'),
                     existing_file.get('id')
                 )
                 replaced_existing = True
                 log_context["new_version"] = new_version
 
         # Track what has been successfully created for rollback
-        r2_key_created = None
         gemini_file_created = None
         
-        # Step 2: Persist to R2 (Cloud Storage)
-        try:
-            logger.info("Persisting file to Cloudflare R2...", extra=log_context)
-            r2_result, r2_key, r2_url = await _persist_to_r2(
-                tmp_path, original_filename, file_display_name, 
-                detected_mime_type, email
-            )
-            r2_key_created = r2_key  # Track for potential rollback
-            logger.info(f"R2 Persistence complete. Key: {r2_key}", extra=log_context)
-            
-            # Track R2 Usage
-            if r2_storage:
-                 await _record_api_usage(
-                    user_id, "cloudflare_r2", "put_object", "PUT", 200, 
-                    file_size, 0, 0, {"key": r2_key}
-                 )
-        except Exception as r2_error:
-            logger.error(f"❌ R2 Upload Failed: {r2_error}", exc_info=True, extra=log_context)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Upload failed at R2 storage: {str(r2_error)}"
-            )
-
-        # Step 3: Process with Gemini (AI Processing)
+        # Step 2: Process with Gemini (AI Processing) - files go directly to Gemini
         try:
             logger.info("Sending file to Gemini FileSearch API...", extra=log_context)
             uploaded_file, final_state, gemini_processed_at = await _process_with_gemini(
@@ -985,19 +905,12 @@ async def upload_document(
             )
         except Exception as gemini_error:
             logger.error(f"❌ Gemini Upload Failed: {gemini_error}", exc_info=True, extra=log_context)
-            # Rollback R2 upload
-            if r2_key_created and r2_storage:
-                try:
-                    await r2_storage.delete_file(r2_key_created)
-                    logger.info(f"✅ Rollback: Deleted R2 file {r2_key_created}", extra=log_context)
-                except Exception as rollback_err:
-                    logger.warning(f"⚠️ Rollback failed for R2: {rollback_err}", extra=log_context)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Upload failed at Gemini processing: {str(gemini_error)}. R2 upload has been rolled back."
+                detail=f"Upload failed at Gemini processing: {str(gemini_error)}"
             )
 
-        # Step 4: Record Metadata (PostgreSQL)
+        # Step 3: Record Metadata (PostgreSQL)
         try:
             # Determine version: increment if replacing, else default to 1
             file_version = log_context.get("new_version", 1)
@@ -1005,8 +918,8 @@ async def upload_document(
             file_ext = os.path.splitext(original_filename)[1] or ".bin"
             db_record_id = await _record_metadata(
                 user_id, original_filename, file_display_name, file_ext,
-                r2_url, r2_key, uploaded_file, file_size, sha256_hash,
-                r2_result, final_state, gemini_processed_at, detected_mime_type, version=file_version
+                uploaded_file, file_size, sha256_hash,
+                final_state, gemini_processed_at, detected_mime_type, version=file_version
             )
         except Exception as db_error:
             logger.error(f"❌ PostgreSQL Record Failed: {db_error}", exc_info=True, extra=log_context)
@@ -1017,19 +930,12 @@ async def upload_document(
                     logger.info(f"✅ Rollback: Deleted Gemini file {gemini_file_created}", extra=log_context)
                 except Exception as rollback_err:
                     logger.warning(f"⚠️ Rollback failed for Gemini: {rollback_err}", extra=log_context)
-            # Rollback R2 upload
-            if r2_key_created and r2_storage:
-                try:
-                    await r2_storage.delete_file(r2_key_created)
-                    logger.info(f"✅ Rollback: Deleted R2 file {r2_key_created}", extra=log_context)
-                except Exception as rollback_err:
-                    logger.warning(f"⚠️ Rollback failed for R2: {rollback_err}", extra=log_context)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Upload failed at PostgreSQL: {str(db_error)}. R2 and Gemini uploads have been rolled back."
+                detail=f"Upload failed at PostgreSQL: {str(db_error)}. Gemini upload has been rolled back."
             )
 
-        # Step 5: Finalize Response
+        # Step 4: Finalize Response
         duration = time.perf_counter() - start_time
         logger.info(
             f"Pipeline successful for {original_filename} in {duration:.2f}s",
@@ -1055,8 +961,6 @@ async def upload_document(
                 sha256_hash=sha256_hash,
                 uri=getattr(uploaded_file, 'uri', None),
                 state=final_state,
-                r2_url=r2_url,
-                r2_key=r2_key,
                 db_record_id=str(db_record_id) if db_record_id else None,
                 source='upload',
                 original_filename=original_filename
@@ -1115,7 +1019,6 @@ async def list_files(
                     SELECT 
                         id, original_filename, display_name, file_extension,
                         mime_type, size_bytes, sha256_hash,
-                        cloudflare_r2_url, cloudflare_r2_key,
                         gemini_file_name, gemini_file_uri, gemini_state,
                         created_at, uploaded_at, updated_at,
                         COALESCE(version, 1) as version
@@ -1137,8 +1040,6 @@ async def list_files(
                         "size": f['size_bytes'] or 0,
                         "size_bytes": f['size_bytes'] or 0,
                         "sha256_hash": f['sha256_hash'],
-                        "r2_url": f['cloudflare_r2_url'],
-                        "r2_key": f['cloudflare_r2_key'],
                         "gemini_file_name": f['gemini_file_name'],
                         "gemini_file_uri": f['gemini_file_uri'],
                         "status": f['gemini_state'] or 'uploaded',
@@ -1239,16 +1140,12 @@ async def list_files(
 
 @app.get("/files/metadata")
 async def list_files_metadata(
-    include_signed_urls: bool = False,
-    signed_url_expiration: int = 3600,
     user_email: Optional[str] = Header(None, alias="X-User-Email")
 ):
     """
     List all uploaded files with metadata from database.
 
     Args:
-        include_signed_urls: Whether to include signed URLs for private R2 files
-        signed_url_expiration: Expiration time for signed URLs in seconds (default 1 hour)
         user_email: User email for access tracking
     """
     if not railway_db:
@@ -1259,7 +1156,7 @@ async def list_files_metadata(
         files = await db.railway_db.fetch(
             """
             SELECT id, original_filename, display_name, file_extension, mime_type,
-                   size_bytes, created_at, cloudflare_r2_url, cloudflare_r2_key, gemini_file_name
+                   size_bytes, created_at, gemini_file_name
             FROM file_uploads
             ORDER BY created_at DESC
             """
@@ -1275,32 +1172,14 @@ async def list_files_metadata(
                 "mime_type": f["mime_type"],
                 "size_bytes": f["size_bytes"],
                 "created_at": f["created_at"].isoformat() if f["created_at"] else None,
-                "cloudflare_r2_url": f["cloudflare_r2_url"],
-                "cloudflare_r2_key": f["cloudflare_r2_key"],
-                "gemini_file_name": f["gemini_file_name"],
-                "r2_access_type": "public" if f["cloudflare_r2_url"] else "private"
+                "gemini_file_name": f["gemini_file_name"]
             }
-
-            # Add signed URL for private R2 files if requested
-            if include_signed_urls and f["cloudflare_r2_key"] and not f["cloudflare_r2_url"]:
-                try:
-                    signed_url = r2_storage.generate_signed_url(
-                        f["cloudflare_r2_key"],
-                        expiration=signed_url_expiration
-                    )
-                    file_info["signed_url"] = signed_url
-                    file_info["signed_url_expires_in"] = signed_url_expiration
-                except Exception as e:
-                    logger.warning(f"Failed to generate signed URL for file {f['id']}: {e}")
-                    file_info["signed_url_error"] = str(e)
 
             file_list.append(file_info)
 
         return {
             "files": file_list,
-            "total_count": len(file_list),
-            "signed_urls_included": include_signed_urls,
-            "signed_url_expiration": signed_url_expiration if include_signed_urls else None
+            "total_count": len(file_list)
         }
     except Exception as e:
         logger.error(f"Error listing files metadata: {e}")
@@ -1309,144 +1188,17 @@ async def list_files_metadata(
 @app.get("/status")
 async def get_service_status():
     """Get service status and configuration information."""
-    r2_info = None
-    if r2_storage:
-        r2_info = {
-            "bucket": r2_storage.bucket_name,
-            "public_url": r2_storage.public_url,
-            "is_private": r2_storage.public_url is None,
-            "endpoint_url": r2_storage.s3_client.meta.endpoint_url
-        }
-
     return {
         "service": "knowledgebase_ingestion",
         "status": "healthy",
-        "r2_configured": r2_storage is not None,
-        "r2_info": r2_info,
         "gemini_configured": genai_client is not None,
         "database_configured": db.railway_db is not None,
         "version": "1.0.0"
     }
 
-@app.get("/files/{file_id}/signed-url")
-async def get_file_signed_url(
-    file_id: str,
-    expiration: int = 3600,  # Default 1 hour
-    user_email: Optional[str] = Header(None, alias="X-User-Email")
-):
-    """
-    Generate a signed URL for accessing a private R2 file.
+# R2 storage removed - download and signed URL endpoints removed
 
-    Args:
-        file_id: The file ID (UUID) or R2 key
-        expiration: URL expiration time in seconds (default 1 hour, max 24 hours)
-        user_email: User email for access tracking
-
-    Returns:
-        Signed URL for file access
-    """
-    if not r2_storage:
-        from shared.utils import dependency_unavailable_error
-        raise dependency_unavailable_error("r2", "R2 storage not configured")
-
-    # Validate expiration time (max 24 hours for security)
-    if expiration > 86400:  # 24 hours
-        raise HTTPException(status_code=400, detail="Expiration time cannot exceed 24 hours")
-
-    if expiration < 60:  # 1 minute minimum
-        raise HTTPException(status_code=400, detail="Expiration time must be at least 60 seconds")
-
-    try:
-        # First try to find by file ID (UUID from database)
-        r2_key = None
-        if db.railway_db:
-            # Try to find the file by ID
-            file_record = await db.railway_db.fetchrow(
-                "SELECT cloudflare_r2_key, original_filename FROM file_uploads WHERE id = $1",
-                file_id
-            )
-            if file_record and file_record['cloudflare_r2_key']:
-                r2_key = file_record['cloudflare_r2_key']
-                logger.info(f"Found R2 key for file ID {file_id}: {r2_key}")
-            else:
-                # If not found by ID, assume the file_id is actually the R2 key
-                r2_key = file_id
-                logger.info(f"Using provided file_id as R2 key: {r2_key}")
-        else:
-            # No database, assume file_id is the R2 key
-            r2_key = file_id
-
-        # Generate signed URL
-        signed_url = r2_storage.generate_signed_url(r2_key, expiration=expiration)
-
-        logger.info(f"Generated signed URL for file {r2_key}, expires in {expiration} seconds")
-
-        return {
-            "signed_url": signed_url,
-            "expires_in_seconds": expiration,
-            "file_key": r2_key,
-            "is_private": True
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to generate signed URL for file {file_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate signed URL: {str(e)}")
-
-@app.get("/files/{file_id}/download")
-async def download_file(
-    file_id: str,
-    expiration: int = 3600,
-    user_email: Optional[str] = Header(None, alias="X-User-Email")
-):
-    """
-    Download a file from private R2 storage with proper Content-Disposition headers.
-
-    Streams the file content directly with download headers for reliable downloads.
-    """
-    try:
-        # Get file info from database first
-        if not db.railway_db:
-            raise HTTPException(status_code=500, detail="Database not available")
-
-        file_record = await db.railway_db.fetchrow(
-            "SELECT cloudflare_r2_key, original_filename, file_extension FROM file_uploads WHERE id = $1",
-            file_id
-        )
-
-        if not file_record or not file_record['cloudflare_r2_key']:
-            raise HTTPException(status_code=404, detail="File not found")
-
-        r2_key = file_record['cloudflare_r2_key']
-        original_filename = file_record['original_filename'] or f"download{file_record['file_extension'] or ''}"
-
-        if not r2_storage:
-            from shared.utils import dependency_unavailable_error
-            raise dependency_unavailable_error("r2", "R2 storage not configured")
-
-        # Get the file content from R2
-        file_content = await r2_storage.download_file(r2_key)
-
-        # Determine MIME type
-        import mimetypes
-        content_type = mimetypes.guess_type(original_filename)[0] or 'application/octet-stream'
-
-        # Return file with proper download headers
-        from fastapi.responses import StreamingResponse
-        from io import BytesIO
-
-        # Convert bytes to stream
-        file_stream = BytesIO(file_content)
-
-        return StreamingResponse(
-            file_stream,
-            media_type=content_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="{original_filename}"',
-                "Cache-Control": "private, no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0"
-            }
-        )
+# R2 storage removed - download endpoint removed
 
     except HTTPException:
         raise
@@ -1457,10 +1209,10 @@ async def download_file(
 
 @app.delete("/files/{file_id}")
 async def delete_file(file_id: str):
-    """Delete a file from Gemini FileSearch, R2 storage, and database.
+    """Delete a file from Gemini FileSearch and database.
 
-    This function attempts to delete from all three storage layers independently.
-    If one fails, it continues with the others (no rollback).
+    This function attempts to delete from both storage layers independently.
+    If one fails, it continues with the other (no rollback).
 
     Args:
         file_id: The database file ID (UUID)
@@ -1474,13 +1226,13 @@ async def delete_file(file_id: str):
         from shared.utils import dependency_unavailable_error
         raise dependency_unavailable_error("gemini", "client not configured")
 
-    # Get file info from database first (like the download endpoint)
+    # Get file info from database first
     if not db.railway_db:
         raise HTTPException(status_code=500, detail="Database not available")
 
     # Try to find the file by database ID - track which table it came from
     file_record = await db.railway_db.fetchrow(
-        "SELECT gemini_file_name, cloudflare_r2_key, 'file_uploads' as table_name FROM file_uploads WHERE id = $1",
+        "SELECT gemini_file_name, 'file_uploads' as table_name FROM file_uploads WHERE id = $1",
         file_id
     )
     table_name = 'file_uploads'
@@ -1488,7 +1240,7 @@ async def delete_file(file_id: str):
     if not file_record:
         # Try scraped_websites table as well
         file_record = await db.railway_db.fetchrow(
-            "SELECT gemini_file_name, cloudflare_r2_key, 'scraped_websites' as table_name FROM scraped_websites WHERE id = $1",
+            "SELECT gemini_file_name, 'scraped_websites' as table_name FROM scraped_websites WHERE id = $1",
             file_id
         )
         if file_record:
@@ -1504,7 +1256,6 @@ async def delete_file(file_id: str):
     # Track deletion results for each storage layer
     deletion_results = {
         "gemini": {"success": False, "error": None},
-        "r2": {"success": False, "error": None},
         "postgres": {"success": False, "error": None}
     }
 
@@ -1517,20 +1268,7 @@ async def delete_file(file_id: str):
         deletion_results["gemini"]["error"] = str(e)
         logger.warning(f"⚠️ Failed to delete from Gemini FileSearch: {e} (continuing with other deletions)")
 
-    # Step 2: Delete from Cloudflare R2 (no rollback on failure)
-    r2_key = file_record.get('cloudflare_r2_key')
-    if r2_storage and r2_key:
-        try:
-            await r2_storage.delete_file(r2_key)
-            deletion_results["r2"]["success"] = True
-            logger.info(f"✅ Deleted file from R2 storage: {r2_key}")
-        except Exception as e:
-            deletion_results["r2"]["error"] = str(e)
-            logger.warning(f"⚠️ Failed to delete from R2 storage: {e} (continuing with database deletion)")
-    else:
-        logger.info(f"ℹ️ No R2 key found for file {file_id}, skipping R2 deletion")
-
-    # Step 3: Delete from database (no rollback on failure)
+    # Step 2: Delete from database (no rollback on failure)
     if db.railway_db:
         try:
             # Delete the file record by ID using the tracked table name
@@ -1579,11 +1317,6 @@ async def delete_file(file_id: str):
     elif deletion_results["gemini"]["error"]:
         failed_parts.append(f"Gemini: {deletion_results['gemini']['error']}")
     
-    if deletion_results["r2"]["success"]:
-        success_parts.append("R2")
-    elif deletion_results["r2"]["error"]:
-        failed_parts.append(f"R2: {deletion_results['r2']['error']}")
-    
     if deletion_results["postgres"]["success"]:
         success_parts.append("PostgreSQL")
     elif deletion_results["postgres"]["error"]:
@@ -1596,7 +1329,7 @@ async def delete_file(file_id: str):
         message += f". Failed: {'; '.join(failed_parts)}"
 
     if overall_success:
-        logger.info(f"✅ File {file_name} deletion result: Gemini={deletion_results['gemini']['success']}, R2={deletion_results['r2']['success']}, DB={deletion_results['postgres']['success']}")
+        logger.info(f"✅ File {gemini_file_name} deletion result: Gemini={deletion_results['gemini']['success']}, DB={deletion_results['postgres']['success']}")
         return {
             "success": True,
             "message": message,

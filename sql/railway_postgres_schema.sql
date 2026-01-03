@@ -25,8 +25,6 @@ CREATE TABLE IF NOT EXISTS file_uploads (
     file_extension VARCHAR(50),
 
     -- Storage information
-    cloudflare_r2_url TEXT,
-    cloudflare_r2_key VARCHAR(500),
     gemini_file_name VARCHAR(500), -- Gemini FileSearch file name/ID
     gemini_file_uri TEXT,
 
@@ -39,7 +37,6 @@ CREATE TABLE IF NOT EXISTS file_uploads (
     version INTEGER DEFAULT 1, -- Document version (increments on re-upload)
 
     -- File states
-    r2_upload_status VARCHAR(50) DEFAULT 'pending', -- pending, completed, failed, skipped
     gemini_upload_status VARCHAR(50) DEFAULT 'pending', -- pending, processing, active, failed
     gemini_state VARCHAR(50), -- ACTIVE, PROCESSING, FAILED, etc.
 
@@ -268,5 +265,25 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                    WHERE table_name = 'scraped_websites' AND column_name = 'version') THEN
         ALTER TABLE scraped_websites ADD COLUMN version INTEGER DEFAULT 1;
+    END IF;
+END $$;
+
+-- Migration: Remove R2 storage columns (R2 storage removed - files go directly to Gemini)
+DO $$
+BEGIN
+    -- Remove R2 columns from file_uploads table
+    IF EXISTS (SELECT 1 FROM information_schema.columns 
+               WHERE table_name = 'file_uploads' AND column_name = 'cloudflare_r2_url') THEN
+        ALTER TABLE file_uploads DROP COLUMN cloudflare_r2_url;
+    END IF;
+    
+    IF EXISTS (SELECT 1 FROM information_schema.columns 
+               WHERE table_name = 'file_uploads' AND column_name = 'cloudflare_r2_key') THEN
+        ALTER TABLE file_uploads DROP COLUMN cloudflare_r2_key;
+    END IF;
+    
+    IF EXISTS (SELECT 1 FROM information_schema.columns 
+               WHERE table_name = 'file_uploads' AND column_name = 'r2_upload_status') THEN
+        ALTER TABLE file_uploads DROP COLUMN r2_upload_status;
     END IF;
 END $$;
