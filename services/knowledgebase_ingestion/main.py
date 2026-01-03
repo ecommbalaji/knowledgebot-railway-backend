@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 # ============================================================================
 # VALIDATION CONSTANTS
 # ============================================================================
-MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50MB
+MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1MB
 ALLOWED_FILE_EXTENSIONS = {
     # Documents
     'pdf', 'doc', 'docx', 'txt', 'rtf', 'odt',
@@ -53,8 +53,6 @@ ALLOWED_MIME_TYPES = {
     # Code/Text
     'text/html', 'application/json', 'application/xml', 'text/xml',
     'application/x-yaml', 'text/yaml', 'text/markdown',
-    # Generic
-    'application/octet-stream',
 }
 
 # Add shared directory to path
@@ -842,6 +840,8 @@ async def upload_document(
         detected_mime_type = detect_mime_type_from_extension(original_filename, file.content_type)
         if detected_mime_type != (file.content_type or "application/octet-stream"):
             logger.info(f"🔍 MIME type detected: {file.content_type or 'None'} -> {detected_mime_type} (from extension)", extra=log_context)
+        else:
+            logger.info(f"✅ MIME type confirmed: {detected_mime_type} for {original_filename}", extra=log_context)
         
         # ====================================================================
         # VALIDATE FILE SIZE (after streaming to know actual size)
