@@ -1470,6 +1470,8 @@ async def delete_file(file_name: str):
     Returns:
         Dict with success status and details of what was deleted/failed
     """
+    logger.info(f"🗑️ Starting deletion of file: {file_name}")
+
     if not genai_client:
         from shared.utils import dependency_unavailable_error
         raise dependency_unavailable_error("gemini", "client not configured")
@@ -1573,6 +1575,7 @@ async def delete_file(file_name: str):
         message += f". Failed: {'; '.join(failed_parts)}"
 
     if overall_success:
+        logger.info(f"✅ File {file_name} deletion result: Gemini={deletion_results['gemini']['success']}, R2={deletion_results['r2']['success']}, DB={deletion_results['postgres']['success']}")
         return {
             "success": True,
             "message": message,
