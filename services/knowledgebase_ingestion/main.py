@@ -1198,14 +1198,6 @@ async def get_service_status():
 
 # R2 storage removed - download and signed URL endpoints removed
 
-# R2 storage removed - download endpoint removed
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to download file {file_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to download file: {str(e)}")
-
 
 @app.delete("/files/{file_id}")
 async def delete_file(file_id: str):
