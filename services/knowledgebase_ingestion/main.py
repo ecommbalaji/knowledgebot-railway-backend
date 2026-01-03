@@ -296,10 +296,9 @@ def validate_file_size(size_bytes: int) -> tuple[bool, str]:
     if size_bytes <= 0:
         return False, "File is empty"
     
-    max_mb = MAX_FILE_SIZE_BYTES / (1024 * 1024)
     if size_bytes > MAX_FILE_SIZE_BYTES:
         file_mb = size_bytes / (1024 * 1024)
-        return False, f"File size ({file_mb:.2f} MB) exceeds maximum allowed size ({max_mb:.0f} MB)"
+        return False, f"File size ({file_mb:.2f} MB) exceeds maximum allowed size of 1 MB"
     
     return True, ""
 
@@ -503,6 +502,37 @@ async def health_check(request: Request):
     log_endpoint_request("knowledgebase_ingestion", "health", request)
     return {"status": "healthy", "service": "knowledgebase_ingestion"}
 
+
+@app.get("/upload/constraints")
+async def get_upload_constraints():
+    """
+    Get file upload constraints for UI display.
+    Returns maximum file size, allowed extensions, and MIME types.
+    """
+    # Format file extensions for display (prioritize JPEG and PNG)
+    image_extensions = ['jpg', 'jpeg', 'png'] + [ext for ext in ALLOWED_FILE_EXTENSIONS if ext not in ['jpg', 'jpeg', 'png']]
+    
+    # Format MIME types for display (prioritize JPEG and PNG)
+    image_mime_types = ['image/jpeg', 'image/png'] + [mime for mime in ALLOWED_MIME_TYPES if mime not in ['image/jpeg', 'image/png']]
+    
+    return {
+        "max_file_size_bytes": MAX_FILE_SIZE_BYTES,
+        "max_file_size_mb": 1,
+        "max_file_size_display": "1 MB",
+        "allowed_extensions": sorted(ALLOWED_FILE_EXTENSIONS),
+        "allowed_mime_types": sorted(ALLOWED_MIME_TYPES),
+        "supported_image_formats": ["JPEG", "PNG"],  # Explicitly highlight JPEG and PNG
+        "supported_formats": {
+            "images": ["JPEG", "PNG", "GIF", "WebP", "BMP", "SVG"],
+            "documents": ["PDF", "DOC", "DOCX", "TXT", "RTF", "ODT"],
+            "presentations": ["PPT", "PPTX", "ODP"],
+            "spreadsheets": ["XLS", "XLSX", "CSV", "ODS"],
+            "audio": ["MP3", "WAV", "OGG", "FLAC", "M4A"],
+            "code": ["HTML", "JSON", "XML", "YAML", "Markdown"]
+        }
+    }
+
+
 def calculate_sha256(file_path: str) -> str:
     """Calculate SHA256 hash of a file."""
     sha256_hash = hashlib.sha256()
@@ -631,8 +661,8 @@ async def _process_with_gemini(tmp_path: str, file_display_name: str, original_f
     
     Args:
         tmp_path: Path to temporary file
-        file_display_name: Display name for the file
-        original_filename: Original filename (for logging)
+        file_display_name: Display name for the file (custom name if provided)
+        original_filename: Original filename (to be stored as metadata)
         mime_type: Detected MIME type (should already be properly detected)
     """
     # Double-check MIME type is not generic (fallback safety)
@@ -641,11 +671,21 @@ async def _process_with_gemini(tmp_path: str, file_display_name: str, original_f
     if final_mime_type != mime_type:
         logger.warning(f"⚠️ [GEMINI] MIME type correction: {mime_type} -> {final_mime_type}")
     
-    logger.info(f"🤖 [GEMINI] Uploading {file_display_name} to FileSearch with MIME type: {final_mime_type}...")
+    # Format display_name to include original filename as metadata
+    # Format: "Display Name | original_filename.ext" or just "original_filename.ext" if no custom name
+    # This ensures we can extract the original filename later from the display_name
+    if file_display_name != original_filename:
+        # Custom display name provided - include original filename as metadata
+        gemini_display_name = f"{file_display_name} | {original_filename}"
+    else:
+        # No custom name - use original filename as display name
+        gemini_display_name = original_filename
+    
+    logger.info(f"🤖 [GEMINI] Uploading to FileSearch - Display: {gemini_display_name}, Original: {original_filename}, MIME: {final_mime_type}...")
     uploaded_file = genai_client.files.upload(
         file=tmp_path,
         config=dict(
-            display_name=file_display_name,
+            display_name=gemini_display_name,
             mime_type=final_mime_type
         )
     )

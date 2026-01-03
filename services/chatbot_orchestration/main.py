@@ -31,6 +31,7 @@ try:
     from pydantic_ai.models.openai import OpenAIModel
     import asyncio
     import json
+    import re
     from pathlib import Path
     logger.info("✅ Core modules imported successfully")
 except ImportError as e:
@@ -624,6 +625,28 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
         logger.info(f"Searching {len(files_to_search)} files with Gemini 2.5 Flash Lite for query: {query}")
 
         try:
+            # Helper function to extract original filename from display_name
+            # Format: "Display Name | original_filename.ext" or just "original_filename.ext"
+            def extract_original_filename(display_name: str) -> str:
+                """Extract original filename from display_name metadata format."""
+                if ' | ' in display_name:
+                    # Format: "Display Name | original_filename.ext"
+                    parts = display_name.split(' | ', 1)
+                    return parts[1].strip() if len(parts) > 1 else display_name
+                else:
+                    # No separator - display_name IS the original filename
+                    return display_name
+            
+            # Create a mapping of file names to display names and original filenames
+            file_metadata_map = {}
+            for f in files_to_search:
+                display_name = getattr(f, 'display_name', f.name)
+                original_filename = extract_original_filename(display_name)
+                file_metadata_map[f.name] = {
+                    'display_name': display_name,
+                    'original_filename': original_filename
+                }
+            
             # Construct the retrieval prompt
             retrieval_prompt = f"""
             You are a specialized retrieval system. Your task is to extract information from the provided files to answer the user's query.
@@ -648,11 +671,57 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
                 contents=contents
             )
 
+            # Parse the response to extract actual file names
+            response_text = response.text
+            
+            # Try to extract file name from response text
+            # Look for "Source File: [filename]" pattern
+            source_file_pattern = r'Source File:\s*([^\n]+)'
+            matches = re.finditer(source_file_pattern, response_text, re.IGNORECASE)
+            
+            found_files = []
+            for match in matches:
+                found_file_name = match.group(1).strip()
+                found_files.append(found_file_name)
+            
+            # Determine the actual file name to use
+            actual_file_name = None
+            
+            if found_files:
+                # Try to match found file name with our file metadata
+                found_name = found_files[0]
+                for gemini_name, metadata in file_metadata_map.items():
+                    display_name = metadata['display_name']
+                    # Check if found name matches display name or is contained in it
+                    if found_name in display_name or display_name in found_name:
+                        # Extract original filename from the matched display_name
+                        actual_file_name = metadata['original_filename']
+                        logger.info(f"Matched found file '{found_name}' to original filename: {actual_file_name}")
+                        break
+                
+                # If no match found, try to extract from the found name directly
+                if not actual_file_name:
+                    actual_file_name = extract_original_filename(found_name)
+                    logger.info(f"Extracted original filename from response: {actual_file_name}")
+            
+            # Fallback: use the original filename of the first file searched
+            if not actual_file_name:
+                if len(files_to_search) == 1:
+                    first_file_metadata = file_metadata_map.get(files_to_search[0].name, {})
+                    actual_file_name = first_file_metadata.get('original_filename', 
+                        getattr(files_to_search[0], 'display_name', 'Unknown File'))
+                else:
+                    # Multiple files - use first file's original filename
+                    first_file_metadata = file_metadata_map.get(files_to_search[0].name, {})
+                    actual_file_name = first_file_metadata.get('original_filename', 'Multiple Files')
+            
+            logger.info(f"Using file name: {actual_file_name} (searched {len(files_to_search)} files)")
+
             # Create a single consolidated result from the LLM's retrieval
             # This acts as the "context" for the downstream orchestration agent
             return [SearchResult(
-                file_name="Gemini_Neural_Retrieval_2.5_Flash_Lite",
-                content=response.text,
+                file_name=actual_file_name,
+                content=response_text,
                 relevance_score=1.0
             )]
             

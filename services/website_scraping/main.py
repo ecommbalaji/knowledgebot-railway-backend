@@ -392,17 +392,18 @@ async def scrape_website(request: ScrapeRequest):
                 # Generate display name from URL (urlparse already imported at module level)
                 parsed_url = urlparse(request.url)
                 domain = parsed_url.netloc.replace('www.', '')
-                display_name = f"scraped_{domain}_{os.path.basename(tmp_path)}.md"
+                # Format: "Display Name | original_url" to store URL as metadata
+                display_name_with_metadata = f"scraped_{domain}_{os.path.basename(tmp_path)}.md | {request.url}"
                 
                 # Upload to Gemini FileSearch
-                logger.info(f"Uploading scraped content to Gemini FileSearch: {display_name}")
+                logger.info(f"Uploading scraped content to Gemini FileSearch: {display_name_with_metadata}")
                 # Use `file=` (library expects file param) and add simple retry/backoff for rate limits
                 uploaded_file = None
                 for attempt in range(3):
                     try:
                         uploaded_file = genai_client.files.upload(
                             file=tmp_path,
-                            config=dict(display_name=display_name, mime_type="text/markdown")
+                            config=dict(display_name=display_name_with_metadata, mime_type="text/markdown")
                         )
                         break
                     except Exception as e:
