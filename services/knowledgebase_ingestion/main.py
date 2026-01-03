@@ -1477,11 +1477,14 @@ async def delete_file(file_name: str):
         raise dependency_unavailable_error("gemini", "client not configured")
 
     # Normalize the file name - Gemini expects 'files/xyz123' format
+    logger.info(f"🗑️ Delete request received for file_name: '{file_name}' (type: {type(file_name)})")
+
     gemini_file_name = file_name
     if not file_name.startswith("files/"):
         gemini_file_name = f"files/{file_name}"
-    
+
     logger.info(f"🗑️ Delete request for file: {file_name} -> normalized to: {gemini_file_name}")
+    logger.info(f"🗑️ Will query database for gemini_file_name = '{gemini_file_name}'")
 
     # Track deletion results for each storage layer
     deletion_results = {
