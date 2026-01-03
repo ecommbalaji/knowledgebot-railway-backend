@@ -817,44 +817,92 @@ async def upload_document(
                 replaced_existing = True
                 log_context["new_version"] = new_version
 
-        # Step 2: Persist to R2 (Cloud Storage)
-        logger.info("Persisting file to Cloudflare R2...", extra=log_context)
-        r2_result, r2_key, r2_url = await _persist_to_r2(
-            tmp_path, original_filename, file_display_name, 
-            file.content_type or "application/octet-stream", email
-        )
-        logger.info(f"R2 Persistence complete. Key: {r2_key}", extra=log_context)
+        # Track what has been successfully created for rollback
+        r2_key_created = None
+        gemini_file_created = None
         
-        # Track R2 Usage
-        if r2_storage:
-             await _record_api_usage(
-                user_id, "cloudflare_r2", "put_object", "PUT", 200, 
-                file_size, 0, 0, {"key": r2_key}
-             )
+        # Step 2: Persist to R2 (Cloud Storage)
+        try:
+            logger.info("Persisting file to Cloudflare R2...", extra=log_context)
+            r2_result, r2_key, r2_url = await _persist_to_r2(
+                tmp_path, original_filename, file_display_name, 
+                file.content_type or "application/octet-stream", email
+            )
+            r2_key_created = r2_key  # Track for potential rollback
+            logger.info(f"R2 Persistence complete. Key: {r2_key}", extra=log_context)
+            
+            # Track R2 Usage
+            if r2_storage:
+                 await _record_api_usage(
+                    user_id, "cloudflare_r2", "put_object", "PUT", 200, 
+                    file_size, 0, 0, {"key": r2_key}
+                 )
+        except Exception as r2_error:
+            logger.error(f"❌ R2 Upload Failed: {r2_error}", exc_info=True, extra=log_context)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Upload failed at R2 storage: {str(r2_error)}"
+            )
 
         # Step 3: Process with Gemini (AI Processing)
-        logger.info("Sending file to Gemini FileSearch API...", extra=log_context)
-        uploaded_file, final_state, gemini_processed_at = await _process_with_gemini(
-            tmp_path, file_display_name, file.content_type or "application/octet-stream"
-        )
-        logger.info(f"Gemini processing finished. State: {final_state}", extra=log_context)
-        
-        # Track Gemini Usage
-        await _record_api_usage(
-            user_id, "gemini", "files.upload", "POST", 200,
-            file_size, 0, 0, {"file_name": uploaded_file.name}
-        )
+        try:
+            logger.info("Sending file to Gemini FileSearch API...", extra=log_context)
+            uploaded_file, final_state, gemini_processed_at = await _process_with_gemini(
+                tmp_path, file_display_name, file.content_type or "application/octet-stream"
+            )
+            gemini_file_created = uploaded_file.name  # Track for potential rollback
+            logger.info(f"Gemini processing finished. State: {final_state}", extra=log_context)
+            
+            # Track Gemini Usage
+            await _record_api_usage(
+                user_id, "gemini", "files.upload", "POST", 200,
+                file_size, 0, 0, {"file_name": uploaded_file.name}
+            )
+        except Exception as gemini_error:
+            logger.error(f"❌ Gemini Upload Failed: {gemini_error}", exc_info=True, extra=log_context)
+            # Rollback R2 upload
+            if r2_key_created and r2_storage:
+                try:
+                    await r2_storage.delete_file(r2_key_created)
+                    logger.info(f"✅ Rollback: Deleted R2 file {r2_key_created}", extra=log_context)
+                except Exception as rollback_err:
+                    logger.warning(f"⚠️ Rollback failed for R2: {rollback_err}", extra=log_context)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Upload failed at Gemini processing: {str(gemini_error)}. R2 upload has been rolled back."
+            )
 
         # Step 4: Record Metadata (PostgreSQL)
-        # Determine version: increment if replacing, else default to 1
-        file_version = log_context.get("new_version", 1)
-        logger.info(f"Recording final metadata to PostgreSQL (version {file_version})...", extra=log_context)
-        file_ext = os.path.splitext(original_filename)[1] or ".bin"
-        db_record_id = await _record_metadata(
-            user_id, original_filename, file_display_name, file_ext,
-            r2_url, r2_key, uploaded_file, file_size, sha256_hash,
-            r2_result, final_state, gemini_processed_at, version=file_version
-        )
+        try:
+            # Determine version: increment if replacing, else default to 1
+            file_version = log_context.get("new_version", 1)
+            logger.info(f"Recording final metadata to PostgreSQL (version {file_version})...", extra=log_context)
+            file_ext = os.path.splitext(original_filename)[1] or ".bin"
+            db_record_id = await _record_metadata(
+                user_id, original_filename, file_display_name, file_ext,
+                r2_url, r2_key, uploaded_file, file_size, sha256_hash,
+                r2_result, final_state, gemini_processed_at, version=file_version
+            )
+        except Exception as db_error:
+            logger.error(f"❌ PostgreSQL Record Failed: {db_error}", exc_info=True, extra=log_context)
+            # Rollback Gemini upload
+            if gemini_file_created and genai_client:
+                try:
+                    genai_client.files.delete(name=gemini_file_created)
+                    logger.info(f"✅ Rollback: Deleted Gemini file {gemini_file_created}", extra=log_context)
+                except Exception as rollback_err:
+                    logger.warning(f"⚠️ Rollback failed for Gemini: {rollback_err}", extra=log_context)
+            # Rollback R2 upload
+            if r2_key_created and r2_storage:
+                try:
+                    await r2_storage.delete_file(r2_key_created)
+                    logger.info(f"✅ Rollback: Deleted R2 file {r2_key_created}", extra=log_context)
+                except Exception as rollback_err:
+                    logger.warning(f"⚠️ Rollback failed for R2: {rollback_err}", extra=log_context)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Upload failed at PostgreSQL: {str(db_error)}. R2 and Gemini uploads have been rolled back."
+            )
 
         # Step 5: Finalize Response
         duration = time.perf_counter() - start_time
