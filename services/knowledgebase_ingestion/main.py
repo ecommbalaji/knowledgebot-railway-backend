@@ -930,7 +930,8 @@ async def list_files(
                         mime_type, size_bytes, sha256_hash,
                         cloudflare_r2_url, cloudflare_r2_key,
                         gemini_file_name, gemini_file_uri, gemini_state,
-                        created_at, uploaded_at
+                        created_at, uploaded_at, updated_at,
+                        COALESCE(version, 1) as version
                     FROM file_uploads
                     ORDER BY created_at DESC
                     """
@@ -956,7 +957,9 @@ async def list_files(
                         "status": f['gemini_state'] or 'uploaded',
                         "source": "upload",
                         "created_at": f['created_at'].isoformat() if f['created_at'] else None,
+                        "updated_at": f['updated_at'].isoformat() if f['updated_at'] else None,
                         "last_modified": f['uploaded_at'].isoformat() if f['uploaded_at'] else None,
+                        "version": f['version'] or 1,
                     })
             
             # Get scraped websites
@@ -967,7 +970,8 @@ async def list_files(
                         id, original_url, domain, title,
                         mime_type, size_bytes, pages_scraped, content_length,
                         gemini_file_name, gemini_file_uri, gemini_state,
-                        created_at, scraped_at
+                        created_at, scraped_at, updated_at,
+                        COALESCE(version, 1) as version
                     FROM scraped_websites
                     ORDER BY created_at DESC
                     """
@@ -996,7 +1000,9 @@ async def list_files(
                         "status": f['gemini_state'] or 'scraped',
                         "source": "scrape",
                         "created_at": f['created_at'].isoformat() if f['created_at'] else None,
+                        "updated_at": f['updated_at'].isoformat() if f['updated_at'] else None,
                         "last_modified": f['scraped_at'].isoformat() if f['scraped_at'] else None,
+                        "version": f['version'] or 1,
                     })
             
             logger.info(f"Retrieved {len(file_list)} files from database")
@@ -1025,7 +1031,9 @@ async def list_files(
                     "status": gf.state.name if hasattr(gf, 'state') else "unknown",
                     "source": "gemini",
                     "created_at": gf.create_time.isoformat() if gf.create_time else None,
+                    "updated_at": gf.update_time.isoformat() if gf.update_time else None,
                     "last_modified": gf.update_time.isoformat() if gf.update_time else None,
+                    "version": 1,  # Gemini-only files default to version 1
                 })
             logger.info(f"Retrieved {len(file_list)} files from Gemini")
         except Exception as e:

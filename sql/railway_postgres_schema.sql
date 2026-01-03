@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS file_uploads (
     size_bytes BIGINT,
     sha256_hash VARCHAR(64),
 
+    -- Version tracking
+    version INTEGER DEFAULT 1, -- Document version (increments on re-upload)
+
     -- File states
     r2_upload_status VARCHAR(50) DEFAULT 'pending', -- pending, completed, failed, skipped
     gemini_upload_status VARCHAR(50) DEFAULT 'pending', -- pending, processing, active, failed
@@ -73,6 +76,9 @@ CREATE TABLE IF NOT EXISTS scraped_websites (
     -- File metadata
     mime_type VARCHAR(255) DEFAULT 'text/markdown',
     size_bytes BIGINT,
+
+    -- Version tracking
+    version INTEGER DEFAULT 1, -- Scrape version (increments on re-scrape)
 
     -- Processing state
     gemini_state VARCHAR(50), -- ACTIVE, PROCESSING, FAILED, etc.
@@ -250,3 +256,17 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
 INSERT INTO users (id, email, name, is_active)
 VALUES ('00000000-0000-0000-0000-000000000001', 'system@knowledgebot.local', 'System User', TRUE)
 ON CONFLICT (id) DO NOTHING;
+
+-- Migration: Add version column if it doesn't exist (for existing databases)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name = 'file_uploads' AND column_name = 'version') THEN
+        ALTER TABLE file_uploads ADD COLUMN version INTEGER DEFAULT 1;
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name = 'scraped_websites' AND column_name = 'version') THEN
+        ALTER TABLE scraped_websites ADD COLUMN version INTEGER DEFAULT 1;
+    END IF;
+END $$;
