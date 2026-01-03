@@ -1455,36 +1455,48 @@ async def download_file(
         raise HTTPException(status_code=500, detail=f"Failed to download file: {str(e)}")
 
 
-@app.delete("/files/{file_name:path}")
-async def delete_file(file_name: str):
+@app.delete("/files/{file_id}")
+async def delete_file(file_id: str):
     """Delete a file from Gemini FileSearch, R2 storage, and database.
-    
+
     This function attempts to delete from all three storage layers independently.
     If one fails, it continues with the others (no rollback).
-    
+
     Args:
-        file_name: The Gemini file name. Can be:
-            - Full format: 'files/xyz123'
-            - Short format: 'xyz123' (will be prefixed with 'files/')
-    
+        file_id: The database file ID (UUID)
+
     Returns:
         Dict with success status and details of what was deleted/failed
     """
-    logger.info(f"🗑️ Starting deletion of file: {file_name}")
+    logger.info(f"🗑️ Starting deletion of file with ID: {file_id}")
 
     if not genai_client:
         from shared.utils import dependency_unavailable_error
         raise dependency_unavailable_error("gemini", "client not configured")
 
-    # Normalize the file name - Gemini expects 'files/xyz123' format
-    logger.info(f"🗑️ Delete request received for file_name: '{file_name}' (type: {type(file_name)})")
+    # Get file info from database first (like the download endpoint)
+    if not db.railway_db:
+        raise HTTPException(status_code=500, detail="Database not available")
 
-    gemini_file_name = file_name
-    if not file_name.startswith("files/"):
-        gemini_file_name = f"files/{file_name}"
+    # Try to find the file by database ID
+    file_record = await db.railway_db.fetchrow(
+        "SELECT gemini_file_name, cloudflare_r2_key FROM file_uploads WHERE id = $1",
+        file_id
+    )
 
-    logger.info(f"🗑️ Delete request for file: {file_name} -> normalized to: {gemini_file_name}")
-    logger.info(f"🗑️ Will query database for gemini_file_name = '{gemini_file_name}'")
+    if not file_record:
+        # Try scraped_websites table as well
+        file_record = await db.railway_db.fetchrow(
+            "SELECT gemini_file_name, cloudflare_r2_key FROM scraped_websites WHERE id = $1",
+            file_id
+        )
+
+    if not file_record or not file_record.get('gemini_file_name'):
+        logger.warning(f"File with ID {file_id} not found in database")
+        raise HTTPException(status_code=404, detail="File not found in database")
+
+    gemini_file_name = file_record['gemini_file_name']
+    logger.info(f"🗑️ Found file in database: gemini_file_name = '{gemini_file_name}'")
 
     # Track deletion results for each storage layer
     deletion_results = {
@@ -1503,48 +1515,36 @@ async def delete_file(file_name: str):
         logger.warning(f"⚠️ Failed to delete from Gemini FileSearch: {e} (continuing with other deletions)")
 
     # Step 2: Delete from Cloudflare R2 (no rollback on failure)
-    r2_key = None
-    if r2_storage and db.railway_db:
+    r2_key = file_record.get('cloudflare_r2_key')
+    if r2_storage and r2_key:
         try:
-            # Get R2 key from database - try both file_uploads and scraped_websites
-            file_record = await db.railway_db.fetchrow(
-                """
-                SELECT cloudflare_r2_key FROM file_uploads WHERE gemini_file_name = $1
-                UNION ALL
-                SELECT cloudflare_r2_key FROM scraped_websites WHERE gemini_file_name = $1
-                LIMIT 1
-                """,
-                gemini_file_name
-            )
-
-            if file_record and file_record.get('cloudflare_r2_key'):
-                r2_key = file_record['cloudflare_r2_key']
-                await r2_storage.delete_file(r2_key)
-                deletion_results["r2"]["success"] = True
-                logger.info(f"✅ Deleted file from R2 storage: {r2_key}")
-            else:
-                logger.info(f"ℹ️ No R2 key found for {gemini_file_name}, skipping R2 deletion")
+            await r2_storage.delete_file(r2_key)
+            deletion_results["r2"]["success"] = True
+            logger.info(f"✅ Deleted file from R2 storage: {r2_key}")
         except Exception as e:
             deletion_results["r2"]["error"] = str(e)
             logger.warning(f"⚠️ Failed to delete from R2 storage: {e} (continuing with database deletion)")
+    else:
+        logger.info(f"ℹ️ No R2 key found for file {file_id}, skipping R2 deletion")
 
     # Step 3: Delete from database (no rollback on failure)
     if db.railway_db:
         try:
-            # Delete from file_uploads
-            deleted_uploads = await db.railway_db.execute(
-                "DELETE FROM file_uploads WHERE gemini_file_name = $1",
-                gemini_file_name
-            )
-
-            # Delete from scraped_websites
-            deleted_scraped = await db.railway_db.execute(
-                "DELETE FROM scraped_websites WHERE gemini_file_name = $1",
-                gemini_file_name
-            )
+            # Delete the file record by ID (we already know which table it came from)
+            if 'original_filename' in file_record:  # From file_uploads table
+                result = await db.railway_db.execute(
+                    "DELETE FROM file_uploads WHERE id = $1",
+                    file_id
+                )
+                logger.info(f"✅ Deleted from file_uploads table: {result}")
+            else:  # From scraped_websites table
+                result = await db.railway_db.execute(
+                    "DELETE FROM scraped_websites WHERE id = $1",
+                    file_id
+                )
+                logger.info(f"✅ Deleted from scraped_websites table: {result}")
 
             deletion_results["postgres"]["success"] = True
-            logger.info(f"✅ Deleted from database: {deleted_uploads} file uploads, {deleted_scraped} scraped websites")
         except Exception as e:
             deletion_results["postgres"]["error"] = str(e)
             logger.warning(f"⚠️ Failed to delete from database: {e}")
