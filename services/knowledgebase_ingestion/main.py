@@ -940,6 +940,10 @@ async def upload_document(
             replaced_existing=replaced_existing
         )
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (these have specific error messages)
+        raise
+        
     except ValueError as ve:
         # Catch validation/input errors separately
         logger.warning(f"Validation error during upload: {ve}", extra=log_context)
@@ -954,7 +958,7 @@ async def upload_document(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="An internal error occurred during document processing."
+            detail=f"An internal error occurred during document processing: {type(e).__name__} - {str(e)}"
         )
         
     finally:
