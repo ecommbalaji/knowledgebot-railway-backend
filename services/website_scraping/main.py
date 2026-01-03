@@ -1,18 +1,34 @@
 """Website Scraping Service - Handles website scraping using Crawl4AI and Gemini FileSearch."""
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, HttpUrl
-from typing import Optional, Dict, Any
+from pydantic import BaseModel, HttpUrl, validator, Field
+from typing import Optional, Dict, Any, List
 from google import genai
 import os
 import logging
+import re
 from dotenv import load_dotenv
 import asyncio
 from crawl4ai import AsyncWebCrawler
 from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
 import tempfile
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 from shared.config import settings
+
+# ============================================================================
+# VALIDATION CONSTANTS
+# ============================================================================
+MAX_URL_LENGTH = 2048
+MAX_PAGES_LIMIT = 100
+MAX_DEPTH_LIMIT = 5
+BLOCKED_DOMAINS = [
+    'localhost', '127.0.0.1', '0.0.0.0',
+    '192.168.', '10.', '172.16.', '172.17.', '172.18.', '172.19.',
+    '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.',
+    '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.',
+]
+ALLOWED_SCHEMES = ['http', 'https']
 
 load_dotenv()
 
@@ -74,6 +90,30 @@ app = FastAPI(
 # Register FastAPI-level exception handlers to ensure stack traces are logged
 register_fastapi_exception_handlers(app, "website_scraping")
 
+# Custom validation error handler for better error messages
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return user-friendly validation error messages."""
+    errors = []
+    for error in exc.errors():
+        field = ".".join(str(loc) for loc in error.get("loc", []))
+        message = error.get("msg", "Validation error")
+        errors.append({"field": field, "message": message})
+    
+    logger.warning(f"Validation error for request: {errors}")
+    
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "success": False,
+            "message": "Validation failed",
+            "errors": errors
+        }
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -102,15 +142,84 @@ else:
         logger.error(f"Failed to initialize Gemini client: {e}")
 
 
+# ============================================================================
+# VALIDATION FUNCTIONS
+# ============================================================================
+
+def validate_url(url: str) -> tuple[bool, str]:
+    """Validate URL format and security."""
+    if not url:
+        return False, "URL is required"
+    
+    if len(url) > MAX_URL_LENGTH:
+        return False, f"URL exceeds maximum length of {MAX_URL_LENGTH} characters"
+    
+    # Parse URL
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False, "Invalid URL format"
+    
+    # Check scheme
+    if parsed.scheme not in ALLOWED_SCHEMES:
+        return False, f"URL scheme must be one of: {', '.join(ALLOWED_SCHEMES)}"
+    
+    # Check for host
+    if not parsed.netloc:
+        return False, "URL must include a domain (e.g., example.com)"
+    
+    # Check for blocked domains (security)
+    host = parsed.netloc.lower()
+    for blocked in BLOCKED_DOMAINS:
+        if blocked in host:
+            return False, f"Access to internal/local domains is not allowed"
+    
+    return True, ""
+
+
+def validate_patterns(patterns: Optional[List[str]]) -> tuple[bool, str]:
+    """Validate include/exclude patterns."""
+    if not patterns:
+        return True, ""
+    
+    if len(patterns) > 50:
+        return False, "Maximum 50 patterns allowed"
+    
+    for pattern in patterns:
+        if len(pattern) > 500:
+            return False, f"Pattern too long (max 500 chars): {pattern[:50]}..."
+        # Check for potentially dangerous regex patterns
+        dangerous = ['(?!', '(?=', '(?<', '(?P']
+        for d in dangerous:
+            if d in pattern:
+                return False, f"Pattern contains potentially dangerous regex: {pattern[:50]}..."
+    
+    return True, ""
+
+
 class ScrapeRequest(BaseModel):
-    url: str
-    max_depth: Optional[int] = 1
-    max_pages: Optional[int] = 10
-    include_patterns: Optional[list[str]] = None
-    exclude_patterns: Optional[list[str]] = None
-    wait_for: Optional[str] = None
-    js_code: Optional[str] = None
-    screenshot: Optional[bool] = False
+    url: str = Field(..., description="URL to scrape", min_length=1, max_length=MAX_URL_LENGTH)
+    max_depth: Optional[int] = Field(1, ge=0, le=MAX_DEPTH_LIMIT, description="Maximum crawl depth")
+    max_pages: Optional[int] = Field(10, ge=1, le=MAX_PAGES_LIMIT, description="Maximum pages to scrape")
+    include_patterns: Optional[List[str]] = Field(None, description="URL patterns to include")
+    exclude_patterns: Optional[List[str]] = Field(None, description="URL patterns to exclude")
+    wait_for: Optional[str] = Field(None, max_length=200, description="CSS selector to wait for")
+    js_code: Optional[str] = Field(None, max_length=5000, description="JavaScript to execute")
+    screenshot: Optional[bool] = Field(False, description="Take screenshot of page")
+    
+    @validator('url')
+    def validate_url_format(cls, v):
+        is_valid, error = validate_url(v)
+        if not is_valid:
+            raise ValueError(error)
+        return v
+    
+    @validator('include_patterns', 'exclude_patterns')
+    def validate_pattern_list(cls, v):
+        is_valid, error = validate_patterns(v)
+        if not is_valid:
+            raise ValueError(error)
+        return v
 
 
 class ScrapeResponse(BaseModel):
@@ -118,7 +227,8 @@ class ScrapeResponse(BaseModel):
     message: str
     file_name: Optional[str] = None
     file_info: Optional[Dict[str, Any]] = None
-    scraped_urls: Optional[list[str]] = None
+    scraped_urls: Optional[List[str]] = None
+    validation_warnings: Optional[List[str]] = None
 
 
 @app.get("/health")
@@ -137,8 +247,29 @@ async def scrape_website(request: ScrapeRequest):
     
     Returns:
         ScrapeResponse with upload information
+    
+    Raises:
+        HTTPException 400: Validation errors (URL format, parameters)
+        HTTPException 500: Scraping or processing failed
+        HTTPException 503: Service dependencies unavailable
     """
+    validation_warnings = []
+    
     try:
+        # Additional runtime validation (Pydantic handles most)
+        logger.info(f"Received scrape request for URL: {request.url}")
+        
+        # Validate URL is accessible (quick check)
+        parsed_url = urlparse(request.url)
+        domain = parsed_url.netloc.replace('www.', '')
+        
+        # Warn about potentially problematic URLs
+        if len(request.url) > 500:
+            validation_warnings.append("Long URLs may cause issues with some websites")
+        
+        if request.max_pages and request.max_pages > 20:
+            validation_warnings.append(f"Scraping {request.max_pages} pages may take a long time")
+        
         # Scrape the website using Crawl4AI
         logger.info(f"Scraping website: {request.url}")
         
@@ -302,7 +433,8 @@ async def scrape_website(request: ScrapeRequest):
                     message=f"Website scraped and uploaded successfully",
                     file_name=uploaded_file.name,
                     file_info=file_info,
-                    scraped_urls=scraped_urls
+                    scraped_urls=scraped_urls,
+                    validation_warnings=validation_warnings if validation_warnings else None
                 )
             finally:
                 # Clean up temp file

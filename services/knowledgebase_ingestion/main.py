@@ -1,8 +1,8 @@
 """Knowledgebase Ingestion Service - Handles document uploads, R2 storage, and Gemini FileSearch."""
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, HttpUrl, Field
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, HttpUrl, Field, validator
+from typing import Optional, List, Dict, Any, Union
 from google import genai
 import os
 import logging
@@ -11,8 +11,51 @@ import json
 import asyncio
 import hashlib
 import sys
+import re
 from pathlib import Path
 from contextlib import asynccontextmanager
+
+# ============================================================================
+# VALIDATION CONSTANTS
+# ============================================================================
+MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50MB
+ALLOWED_FILE_EXTENSIONS = {
+    # Documents
+    'pdf', 'doc', 'docx', 'txt', 'rtf', 'odt',
+    # Presentations
+    'ppt', 'pptx', 'odp',
+    # Spreadsheets
+    'xls', 'xlsx', 'csv', 'ods',
+    # Images
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg',
+    # Audio
+    'mp3', 'wav', 'ogg', 'flac', 'm4a',
+    # Code/Text
+    'html', 'htm', 'json', 'xml', 'yaml', 'yml', 'md', 'markdown',
+}
+ALLOWED_MIME_TYPES = {
+    # Documents
+    'application/pdf', 'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain', 'application/rtf', 'application/vnd.oasis.opendocument.text',
+    # Presentations
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.oasis.opendocument.presentation',
+    # Spreadsheets
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/csv', 'application/vnd.oasis.opendocument.spreadsheet',
+    # Images
+    'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'image/svg+xml',
+    # Audio
+    'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4',
+    # Code/Text
+    'text/html', 'application/json', 'application/xml', 'text/xml',
+    'application/x-yaml', 'text/yaml', 'text/markdown',
+    # Generic
+    'application/octet-stream',
+}
 
 # Add shared directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -93,6 +136,30 @@ app = FastAPI(
 
 # Register FastAPI-level exception handlers to ensure stack traces are logged
 register_fastapi_exception_handlers(app, "knowledgebase_ingestion")
+
+# Custom validation error handler for better error messages
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return user-friendly validation error messages."""
+    errors = []
+    for error in exc.errors():
+        field = ".".join(str(loc) for loc in error.get("loc", []))
+        message = error.get("msg", "Validation error")
+        errors.append({"field": field, "message": message})
+    
+    logger.warning(f"Validation error for request: {errors}")
+    
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "success": False,
+            "message": "Validation failed",
+            "errors": errors
+        }
+    )
 
 # Request logging middleware
 import time
@@ -185,12 +252,176 @@ class FileInfo(BaseModel):
     r2_url: Optional[str] = None
     r2_key: Optional[str] = None
     db_record_id: Optional[str] = None
+    source: Optional[str] = None  # 'upload' or 'scrape'
+    original_filename: Optional[str] = None
 
 
 class UploadResponse(BaseModel):
     success: bool
     file: Optional[FileInfo] = None
     message: str
+    replaced_existing: bool = False
+
+
+class ValidationError(BaseModel):
+    field: str
+    message: str
+
+
+class ValidationResult(BaseModel):
+    valid: bool
+    errors: List[ValidationError] = []
+
+
+# ============================================================================
+# VALIDATION FUNCTIONS
+# ============================================================================
+
+def validate_file_extension(filename: str) -> tuple[bool, str]:
+    """Validate file extension is allowed."""
+    if not filename:
+        return False, "Filename is required"
+    
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    if not ext:
+        return False, "File must have an extension"
+    
+    if ext not in ALLOWED_FILE_EXTENSIONS:
+        allowed_list = ', '.join(sorted(ALLOWED_FILE_EXTENSIONS))
+        return False, f"File type '.{ext}' is not allowed. Allowed types: {allowed_list}"
+    
+    return True, ""
+
+
+def validate_file_size(size_bytes: int) -> tuple[bool, str]:
+    """Validate file size is within limits."""
+    if size_bytes <= 0:
+        return False, "File is empty"
+    
+    max_mb = MAX_FILE_SIZE_BYTES / (1024 * 1024)
+    if size_bytes > MAX_FILE_SIZE_BYTES:
+        file_mb = size_bytes / (1024 * 1024)
+        return False, f"File size ({file_mb:.2f} MB) exceeds maximum allowed size ({max_mb:.0f} MB)"
+    
+    return True, ""
+
+
+def validate_mime_type(mime_type: str, filename: str) -> tuple[bool, str]:
+    """Validate MIME type is allowed."""
+    if not mime_type:
+        return True, ""  # Allow missing mime type, will be detected
+    
+    # Be lenient - if extension is valid, accept even if mime type is generic
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    if ext in ALLOWED_FILE_EXTENSIONS:
+        return True, ""
+    
+    if mime_type not in ALLOWED_MIME_TYPES:
+        return False, f"MIME type '{mime_type}' is not allowed"
+    
+    return True, ""
+
+
+def sanitize_filename(filename: str) -> str:
+    """Sanitize filename to prevent path traversal and special characters."""
+    # Remove path separators
+    filename = os.path.basename(filename)
+    # Remove potentially dangerous characters
+    filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', filename)
+    # Limit length
+    if len(filename) > 255:
+        name, ext = os.path.splitext(filename)
+        filename = name[:255-len(ext)] + ext
+    return filename
+
+
+async def check_duplicate_file(sha256_hash: str, original_filename: str) -> Optional[Dict[str, Any]]:
+    """Check if a file with the same hash or name already exists."""
+    if not db.railway_db:
+        return None
+    
+    try:
+        # Check by hash first (exact duplicate)
+        existing = await db.railway_db.fetchrow(
+            """
+            SELECT id, original_filename, display_name, sha256_hash, size_bytes, gemini_file_name
+            FROM file_uploads 
+            WHERE sha256_hash = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            sha256_hash
+        )
+        
+        if existing:
+            return {
+                "id": str(existing['id']),
+                "original_filename": existing['original_filename'],
+                "display_name": existing['display_name'],
+                "sha256_hash": existing['sha256_hash'],
+                "size_bytes": existing['size_bytes'],
+                "gemini_file_name": existing['gemini_file_name'],
+                "match_type": "hash"
+            }
+        
+        # Check by filename (same name, different content)
+        existing_by_name = await db.railway_db.fetchrow(
+            """
+            SELECT id, original_filename, display_name, sha256_hash, size_bytes, gemini_file_name
+            FROM file_uploads 
+            WHERE original_filename = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            original_filename
+        )
+        
+        if existing_by_name:
+            return {
+                "id": str(existing_by_name['id']),
+                "original_filename": existing_by_name['original_filename'],
+                "display_name": existing_by_name['display_name'],
+                "sha256_hash": existing_by_name['sha256_hash'],
+                "size_bytes": existing_by_name['size_bytes'],
+                "gemini_file_name": existing_by_name['gemini_file_name'],
+                "match_type": "filename"
+            }
+        
+        return None
+    except Exception as e:
+        logger.warning(f"Error checking for duplicate file: {e}")
+        return None
+
+
+async def delete_existing_file(gemini_file_name: str, r2_key: Optional[str], db_id: str):
+    """Delete an existing file from all storage layers."""
+    try:
+        # Delete from Gemini
+        if genai_client and gemini_file_name:
+            try:
+                genai_client.files.delete(name=gemini_file_name)
+                logger.info(f"Deleted old file from Gemini: {gemini_file_name}")
+            except Exception as e:
+                logger.warning(f"Failed to delete from Gemini: {e}")
+        
+        # Delete from R2
+        if r2_storage and r2_key:
+            try:
+                await r2_storage.delete_file(r2_key)
+                logger.info(f"Deleted old file from R2: {r2_key}")
+            except Exception as e:
+                logger.warning(f"Failed to delete from R2: {e}")
+        
+        # Delete from database
+        if db.railway_db:
+            await db.railway_db.execute(
+                "DELETE FROM file_uploads WHERE id = $1",
+                db_id
+            )
+            logger.info(f"Deleted old file record from database: {db_id}")
+            
+    except Exception as e:
+        logger.error(f"Error deleting existing file: {e}")
 
 
 class FilesResponse(BaseModel):
@@ -438,12 +669,25 @@ logger = logging.getLogger(__name__)
 async def upload_document(
     file: UploadFile = File(...),
     display_name: Optional[str] = Form(None),
-    user_email: Optional[str] = Header(None, alias="X-User-Email")
+    user_email: Optional[str] = Header(None, alias="X-User-Email"),
+    replace_existing: bool = Form(False)  # Whether to replace existing file with same name/hash
 ):
     """
     Modularized Document Ingestion Pipeline with structured logging and performance tracking.
+    
+    Args:
+        file: The file to upload
+        display_name: Optional display name for the file
+        user_email: User email for tracking
+        replace_existing: If True, replaces existing file with same name/hash
+    
+    Raises:
+        HTTPException 400: Validation errors (file size, type, etc.)
+        HTTPException 409: File already exists and replace_existing is False
+        HTTPException 500: Internal server error
     """
     start_time = time.perf_counter()
+    replaced_existing = False
     
     # Configuration Check
     if not genai_client:
@@ -453,13 +697,39 @@ async def upload_document(
 
     # Initial State
     tmp_path = None
-    original_filename = file.filename or "unknown_file"
+    original_filename = sanitize_filename(file.filename or "unknown_file")
     file_display_name = display_name or original_filename
     email = user_email or settings.default_user_email
     
     # Create a contextual prefix for logs to track this specific request
     log_context = {"upload_file_name": original_filename, "user_email": email}
     logger.info(f"Initiating upload pipeline for {original_filename}", extra=log_context)
+    
+    # ========================================================================
+    # SERVER-SIDE VALIDATION
+    # ========================================================================
+    validation_errors = []
+    
+    # Validate file extension
+    ext_valid, ext_error = validate_file_extension(original_filename)
+    if not ext_valid:
+        validation_errors.append({"field": "file", "message": ext_error})
+    
+    # Validate MIME type
+    mime_valid, mime_error = validate_mime_type(file.content_type, original_filename)
+    if not mime_valid:
+        validation_errors.append({"field": "content_type", "message": mime_error})
+    
+    # Early validation check
+    if validation_errors:
+        logger.warning(f"Validation failed for {original_filename}: {validation_errors}", extra=log_context)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "File validation failed",
+                "errors": validation_errors
+            }
+        )
 
     try:
         # Step 0: User Setup
@@ -482,6 +752,62 @@ async def upload_document(
         sha256_hash = calculate_sha256(tmp_path)
         log_context["sha256"] = sha256_hash
         logger.info(f"File streamed. Size: {file_size} bytes, Hash: {sha256_hash}", extra=log_context)
+        
+        # ====================================================================
+        # VALIDATE FILE SIZE (after streaming to know actual size)
+        # ====================================================================
+        size_valid, size_error = validate_file_size(file_size)
+        if not size_valid:
+            logger.warning(f"File size validation failed: {size_error}", extra=log_context)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": size_error,
+                    "errors": [{"field": "file", "message": size_error}]
+                }
+            )
+        
+        # ====================================================================
+        # CHECK FOR DUPLICATE FILES
+        # ====================================================================
+        existing_file = await check_duplicate_file(sha256_hash, original_filename)
+        if existing_file:
+            match_type = existing_file.get("match_type", "unknown")
+            
+            if match_type == "hash":
+                # Exact duplicate - same content
+                if not replace_existing:
+                    logger.info(f"Duplicate file detected (same content hash): {existing_file['original_filename']}", extra=log_context)
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "message": f"A file with identical content already exists: '{existing_file['original_filename']}'",
+                            "existing_file": existing_file,
+                            "suggestion": "Set replace_existing=true to replace the existing file"
+                        }
+                    )
+            else:
+                # Same filename, different content
+                if not replace_existing:
+                    logger.info(f"File with same name exists but different content: {existing_file['original_filename']}", extra=log_context)
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "message": f"A file named '{existing_file['original_filename']}' already exists with different content. This will replace the old content with new.",
+                            "existing_file": existing_file,
+                            "suggestion": "Set replace_existing=true to replace the existing file"
+                        }
+                    )
+            
+            # Replace existing file if requested
+            if replace_existing:
+                logger.info(f"Replacing existing file: {existing_file['gemini_file_name']}", extra=log_context)
+                await delete_existing_file(
+                    existing_file.get('gemini_file_name'),
+                    existing_file.get('r2_key'),
+                    existing_file.get('id')
+                )
+                replaced_existing = True
 
         # Step 2: Persist to R2 (Cloud Storage)
         logger.info("Persisting file to Cloudflare R2...", extra=log_context)
@@ -548,9 +874,12 @@ async def upload_document(
                 state=final_state,
                 r2_url=r2_url,
                 r2_key=r2_key,
-                db_record_id=str(db_record_id) if db_record_id else None
+                db_record_id=str(db_record_id) if db_record_id else None,
+                source='upload',
+                original_filename=original_filename
             ),
-            message=f"File processed successfully: {file_display_name}"
+            message=f"File {'replaced' if replaced_existing else 'processed'} successfully: {file_display_name}",
+            replaced_existing=replaced_existing
         )
 
     except ValueError as ve:
@@ -578,36 +907,140 @@ async def upload_document(
             except Exception as cleanup_err:
                 logger.warning(f"Failed to delete temp file {tmp_path}: {cleanup_err}", extra=log_context)
 
-@app.get("/files", response_model=FilesResponse)
-async def list_files():
-    """List all uploaded files in Gemini FileSearch."""
-    if not genai_client:
-        from shared.utils import dependency_unavailable_error
-        raise dependency_unavailable_error("gemini", "client not configured")
-
-    try:
-        files = genai_client.files.list()
-
-        file_list = []
-        for file in files:
-            file_info = FileInfo(
-                name=file.name,
-                display_name=file.display_name,
-                mime_type=file.mime_type,
-                create_time=file.create_time.isoformat() if file.create_time else None,
-                update_time=file.update_time.isoformat() if file.update_time else None,
-                expiration_time=file.expiration_time.isoformat() if file.expiration_time else None,
-                size_bytes=str(file.size_bytes) if file.size_bytes else None,
-                sha256_hash=file.sha256_hash if hasattr(file, 'sha256_hash') else None,
-                uri=file.uri if hasattr(file, 'uri') else None,
-                state=file.state.name if hasattr(file, 'state') else None,
-            )
-            file_list.append(file_info)
-
-        return FilesResponse(files=file_list)
-    except Exception as e:
-        logger.error(f"Error listing files: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+@app.get("/files")
+async def list_files(
+    source: Optional[str] = Query(None, description="Filter by source: 'upload', 'scrape', or None for all"),
+    include_gemini: bool = Query(True, description="Include Gemini FileSearch files")
+):
+    """
+    List all files from database (file_uploads + scraped_websites tables).
+    Returns combined list with source type, size, and metadata.
+    """
+    file_list = []
+    
+    # Get files from database if available
+    if db.railway_db:
+        try:
+            # Get uploaded files
+            if source is None or source == 'upload':
+                uploaded_files = await db.railway_db.fetch(
+                    """
+                    SELECT 
+                        id, original_filename, display_name, file_extension,
+                        mime_type, size_bytes, sha256_hash,
+                        cloudflare_r2_url, cloudflare_r2_key,
+                        gemini_file_name, gemini_file_uri, gemini_state,
+                        created_at, uploaded_at
+                    FROM file_uploads
+                    ORDER BY created_at DESC
+                    """
+                )
+                
+                for f in uploaded_files:
+                    file_list.append({
+                        "key": str(f['id']),
+                        "id": str(f['id']),
+                        "name": f['original_filename'],
+                        "original_name": f['original_filename'],
+                        "display_name": f['display_name'],
+                        "file_type": f['file_extension'],
+                        "type": f['file_extension'],
+                        "mime_type": f['mime_type'],
+                        "size": f['size_bytes'] or 0,
+                        "size_bytes": f['size_bytes'] or 0,
+                        "sha256_hash": f['sha256_hash'],
+                        "r2_url": f['cloudflare_r2_url'],
+                        "r2_key": f['cloudflare_r2_key'],
+                        "gemini_file_name": f['gemini_file_name'],
+                        "gemini_file_uri": f['gemini_file_uri'],
+                        "status": f['gemini_state'] or 'uploaded',
+                        "source": "upload",
+                        "created_at": f['created_at'].isoformat() if f['created_at'] else None,
+                        "last_modified": f['uploaded_at'].isoformat() if f['uploaded_at'] else None,
+                    })
+            
+            # Get scraped websites
+            if source is None or source == 'scrape':
+                scraped_files = await db.railway_db.fetch(
+                    """
+                    SELECT 
+                        id, original_url, domain, title,
+                        mime_type, size_bytes, pages_scraped, content_length,
+                        gemini_file_name, gemini_file_uri, gemini_state,
+                        created_at, scraped_at
+                    FROM scraped_websites
+                    ORDER BY created_at DESC
+                    """
+                )
+                
+                for f in scraped_files:
+                    # Generate a display name from URL
+                    display_name = f['title'] or f['domain'] or f['original_url']
+                    file_list.append({
+                        "key": str(f['id']),
+                        "id": str(f['id']),
+                        "name": display_name,
+                        "original_name": display_name,
+                        "display_name": display_name,
+                        "file_type": "url",
+                        "type": "url",
+                        "mime_type": f['mime_type'] or "text/markdown",
+                        "size": f['size_bytes'] or f['content_length'] or 0,
+                        "size_bytes": f['size_bytes'] or f['content_length'] or 0,
+                        "source_url": f['original_url'],
+                        "url": f['original_url'],
+                        "domain": f['domain'],
+                        "pages_scraped": f['pages_scraped'],
+                        "gemini_file_name": f['gemini_file_name'],
+                        "gemini_file_uri": f['gemini_file_uri'],
+                        "status": f['gemini_state'] or 'scraped',
+                        "source": "scrape",
+                        "created_at": f['created_at'].isoformat() if f['created_at'] else None,
+                        "last_modified": f['scraped_at'].isoformat() if f['scraped_at'] else None,
+                    })
+            
+            logger.info(f"Retrieved {len(file_list)} files from database")
+            
+        except Exception as e:
+            logger.error(f"Error fetching from database: {e}")
+            # Fall back to Gemini if database fails
+    
+    # Optionally include Gemini files (if database returned nothing or requested)
+    if include_gemini and genai_client and len(file_list) == 0:
+        try:
+            gemini_files = genai_client.files.list()
+            for gf in gemini_files:
+                file_list.append({
+                    "key": gf.name,
+                    "id": gf.name,
+                    "name": gf.display_name,
+                    "original_name": gf.display_name,
+                    "display_name": gf.display_name,
+                    "file_type": gf.mime_type.split('/')[-1] if gf.mime_type else "unknown",
+                    "type": gf.mime_type.split('/')[-1] if gf.mime_type else "unknown",
+                    "mime_type": gf.mime_type,
+                    "size": gf.size_bytes or 0,
+                    "size_bytes": gf.size_bytes or 0,
+                    "gemini_file_name": gf.name,
+                    "status": gf.state.name if hasattr(gf, 'state') else "unknown",
+                    "source": "gemini",
+                    "created_at": gf.create_time.isoformat() if gf.create_time else None,
+                    "last_modified": gf.update_time.isoformat() if gf.update_time else None,
+                })
+            logger.info(f"Retrieved {len(file_list)} files from Gemini")
+        except Exception as e:
+            logger.error(f"Error listing Gemini files: {e}")
+    
+    return {
+        "files": file_list,
+        "count": len(file_list),
+        "sources": {
+            "upload": len([f for f in file_list if f.get("source") == "upload"]),
+            "scrape": len([f for f in file_list if f.get("source") == "scrape"]),
+            "gemini": len([f for f in file_list if f.get("source") == "gemini"]),
+        },
+        "total_size_bytes": sum(f.get("size_bytes", 0) or 0 for f in file_list)
+    }
 
 @app.get("/files/metadata")
 async def list_files_metadata(
