@@ -1232,7 +1232,7 @@ async def delete_file(file_id: str):
 
     # Try to find the file by database ID - track which table it came from
     file_record = await db.railway_db.fetchrow(
-        "SELECT gemini_file_name, 'file_uploads' as table_name FROM file_uploads WHERE id = $1",
+        "SELECT gemini_file_name, original_filename, 'file_uploads' as table_name FROM file_uploads WHERE id = $1",
         file_id
     )
     table_name = 'file_uploads'
@@ -1240,7 +1240,7 @@ async def delete_file(file_id: str):
     if not file_record:
         # Try scraped_websites table as well
         file_record = await db.railway_db.fetchrow(
-            "SELECT gemini_file_name, 'scraped_websites' as table_name FROM scraped_websites WHERE id = $1",
+            "SELECT gemini_file_name, original_url as original_filename, 'scraped_websites' as table_name FROM scraped_websites WHERE id = $1",
             file_id
         )
         if file_record:
@@ -1251,7 +1251,12 @@ async def delete_file(file_id: str):
         raise HTTPException(status_code=404, detail="File not found in database")
 
     gemini_file_name = file_record['gemini_file_name']
-    logger.info(f"🗑️ Found file in database: gemini_file_name = '{gemini_file_name}', table = '{table_name}'")
+    original_filename = file_record.get('original_filename', 'Unknown')
+    logger.info(f"🗑️ Found file in database: ID={file_id}, gemini_file_name='{gemini_file_name}', original_filename='{original_filename}', table='{table_name}'")
+    
+    # Verify gemini_file_name format (should start with 'files/')
+    if not gemini_file_name.startswith('files/'):
+        logger.warning(f"⚠️ Unexpected gemini_file_name format for file {file_id}: '{gemini_file_name}' (expected format: 'files/...')")
 
     # Track deletion results for each storage layer
     deletion_results = {
@@ -1261,12 +1266,34 @@ async def delete_file(file_id: str):
 
     # Step 1: Delete from Gemini FileSearch (no rollback on failure)
     try:
+        # First verify the file exists in Gemini before attempting deletion
+        try:
+            file_info = genai_client.files.get(name=gemini_file_name)
+            logger.info(f"🔍 Found file in Gemini: {gemini_file_name}, state: {file_info.state.name}")
+        except Exception as get_error:
+            error_str = str(get_error)
+            # Check if it's a 403/404 (file doesn't exist or permission denied)
+            if "403" in error_str or "404" in error_str or "PERMISSION_DENIED" in error_str or "NOT_FOUND" in error_str:
+                logger.warning(f"⚠️ File {gemini_file_name} not found in Gemini (may have been already deleted or expired): {error_str}")
+                deletion_results["gemini"]["error"] = f"File not found in Gemini: {error_str}"
+                # Don't treat this as a critical error - continue with database deletion
+            else:
+                # Re-raise if it's a different error
+                raise
+        
+        # File exists, proceed with deletion
         genai_client.files.delete(name=gemini_file_name)
         deletion_results["gemini"]["success"] = True
         logger.info(f"✅ Deleted file from Gemini FileSearch: {gemini_file_name}")
     except Exception as e:
-        deletion_results["gemini"]["error"] = str(e)
-        logger.warning(f"⚠️ Failed to delete from Gemini FileSearch: {e} (continuing with other deletions)")
+        error_str = str(e)
+        # Handle 403/404 errors gracefully
+        if "403" in error_str or "404" in error_str or "PERMISSION_DENIED" in error_str or "NOT_FOUND" in error_str:
+            logger.warning(f"⚠️ File {gemini_file_name} not found in Gemini (may have been already deleted): {error_str}")
+            deletion_results["gemini"]["error"] = f"File not found in Gemini: {error_str}"
+        else:
+            deletion_results["gemini"]["error"] = error_str
+            logger.warning(f"⚠️ Failed to delete from Gemini FileSearch: {e} (continuing with database deletion)")
 
     # Step 2: Delete from database (no rollback on failure)
     if db.railway_db:
@@ -1322,14 +1349,37 @@ async def delete_file(file_id: str):
     elif deletion_results["postgres"]["error"]:
         failed_parts.append(f"PostgreSQL: {deletion_results['postgres']['error']}")
 
-    message = f"File {gemini_file_name} deletion: "
+    # Build response message with more context
+    message = f"File deletion (ID: {file_id}, Gemini: {gemini_file_name}): "
     if success_parts:
         message += f"Deleted from {', '.join(success_parts)}"
     if failed_parts:
-        message += f". Failed: {'; '.join(failed_parts)}"
+        # Check if Gemini failure is due to file not found (not critical)
+        gemini_error = deletion_results.get("gemini", {}).get("error", "")
+        if "not found" in gemini_error.lower() or "permission_denied" in gemini_error.lower():
+            # File not found in Gemini is acceptable - it may have been already deleted
+            message += f". Note: {gemini_error}"
+        else:
+            message += f". Failed: {'; '.join(failed_parts)}"
 
-    if overall_success:
-        logger.info(f"✅ File {gemini_file_name} deletion result: Gemini={deletion_results['gemini']['success']}, DB={deletion_results['postgres']['success']}")
+    # Consider deletion successful if database deletion succeeded, even if Gemini file was not found
+    # (file may have been already deleted from Gemini or expired)
+    db_success = deletion_results.get("postgres", {}).get("success", False)
+    gemini_success = deletion_results.get("gemini", {}).get("success", False)
+    gemini_error = deletion_results.get("gemini", {}).get("error", "")
+    is_gemini_not_found = "not found" in gemini_error.lower() or "permission_denied" in gemini_error.lower()
+    
+    if db_success:
+        # Database deletion succeeded - this is the most important
+        logger.info(f"✅ File {file_id} deletion result: Gemini={'success' if gemini_success else ('not_found' if is_gemini_not_found else 'failed')}, DB=success")
+        return {
+            "success": True,
+            "message": message,
+            "details": deletion_results
+        }
+    elif overall_success:
+        # At least one deletion succeeded
+        logger.info(f"✅ File {file_id} deletion result: Gemini={gemini_success}, DB={db_success}")
         return {
             "success": True,
             "message": message,
@@ -1337,6 +1387,7 @@ async def delete_file(file_id: str):
         }
     else:
         # All deletions failed
+        logger.error(f"❌ File {file_id} deletion failed completely: {message}")
         raise HTTPException(
             status_code=500,
             detail=message

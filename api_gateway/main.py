@@ -798,77 +798,7 @@ async def knowledgebase_files_metadata_endpoint(
         raise HTTPException(status_code=500, detail=f"Knowledgebase service error: {str(e)}")
 
 
-@app.get("/api/v1/knowledgebase/files/{file_id}/signed-url")
-async def knowledgebase_file_signed_url_endpoint(
-    file_id: str,
-    request: Request,
-    expiration: int = 3600
-):
-    """Route signed URL generation requests to knowledgebase ingestion service."""
-    try:
-        url = f"{KNOWLEDGEBASE_INGESTION_URL}/files/{file_id}/signed-url"
-        if expiration != 3600:
-            url += f"?expiration={expiration}"
-
-        headers = dict(request.headers)
-        # Remove hop-by-hop and problematic headers
-        hop_by_hop_headers = [
-            'connection', 'keep-alive', 'proxy-authenticate',
-            'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
-        ]
-        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
-
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, headers=headers, timeout=30.0)
-            return JSONResponse(
-                status_code=resp.status_code,
-                content=resp.json() if resp.headers.get('content-type', '').startswith('application/json') else resp.text
-            )
-    except Exception as e:
-        logger.error(f"Error routing signed URL request for file {file_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Knowledgebase service error: {str(e)}")
-
-
-@app.get("/api/v1/knowledgebase/files/{file_id}/download")
-async def knowledgebase_file_download_endpoint(
-    file_id: str,
-    request: Request,
-    expiration: int = 3600
-):
-    """Route file download requests to knowledgebase ingestion service."""
-    try:
-        url = f"{KNOWLEDGEBASE_INGESTION_URL}/files/{file_id}/download"
-        if expiration != 3600:
-            url += f"?expiration={expiration}"
-
-        headers = dict(request.headers)
-        # Remove hop-by-hop headers and problematic ones
-        hop_by_hop_headers = [
-            'connection', 'keep-alive', 'proxy-authenticate',
-            'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade'
-        ]
-        headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers and k.lower() not in ['host', 'content-length']}
-
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, headers=headers, timeout=30.0, follow_redirects=False)
-
-            if resp.status_code == 302:
-                # Return the redirect response
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "download_url": resp.headers.get("location"),
-                        "expires_in_seconds": expiration
-                    }
-                )
-            else:
-                return JSONResponse(
-                    status_code=resp.status_code,
-                    content=resp.json() if resp.headers.get('content-type', '').startswith('application/json') else resp.text
-                )
-    except Exception as e:
-        logger.error(f"Error routing download request for file {file_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Knowledgebase service error: {str(e)}")
+# R2 storage removed - signed-url and download endpoints removed
 
 
 @app.delete("/api/v1/knowledgebase/files/{file_name:path}")
@@ -878,8 +808,8 @@ async def knowledgebase_file_delete_endpoint(
 ):
     """Route file deletion requests to knowledgebase ingestion service.
     
-    Deletes a file from Gemini FileSearch, R2 storage, and database.
-    The file_name can include slashes (e.g., 'files/xyz123').
+    Deletes a file from Gemini FileSearch and database.
+    The file_name should be the database ID (UUID).
     """
     try:
         url = f"{KNOWLEDGEBASE_INGESTION_URL}/files/{file_name}"
