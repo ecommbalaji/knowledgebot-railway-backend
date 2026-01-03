@@ -606,6 +606,7 @@ async def knowledgebase_upload_endpoint(
     request: Request,
     file: UploadFile = File(...),
     display_name: Optional[str] = Form(None),
+    replace_existing: bool = Form(False),
     user_email: Optional[str] = Header(None, alias="X-User-Email")
 ):
     """Route knowledgebase upload requests to knowledgebase ingestion service."""
@@ -613,6 +614,7 @@ async def knowledgebase_upload_endpoint(
     try:
         logger.info(f"📁 Received file upload request: {file.filename}, size: {file.size if hasattr(file, 'size') else 'unknown'}")
         logger.info(f"📋 Content type: {file.content_type}")
+        logger.info(f"🔄 Replace existing: {replace_existing}")
 
         # Read the file content asynchronously
         file_content = await file.read()
@@ -630,13 +632,17 @@ async def knowledgebase_upload_endpoint(
         }
 
         # Prepare form data fields
-        # This maps to FastAPI's: display_name: Optional[str] = Form(None)
+        # This maps to FastAPI's: display_name: Optional[str] = Form(None), replace_existing: bool = Form(False)
         data = {}
         if display_name:
             data['display_name'] = display_name
             logger.info(f"📝 Display name: {display_name}")
         else:
             logger.info("📝 No display name provided")
+        
+        # Always include replace_existing in form data
+        data['replace_existing'] = str(replace_existing).lower()
+        logger.info(f"🔄 Forwarding replace_existing: {data['replace_existing']}")
 
         # Prepare headers for forwarding
         # This maps to FastAPI's: user_email: Optional[str] = Header(None, alias="X-User-Email")
