@@ -346,8 +346,7 @@ async def scrape_website(request: ScrapeRequest):
                 tmp_path = tmp_file.name
             
             try:
-                # Generate display name from URL
-                from urllib.parse import urlparse
+                # Generate display name from URL (urlparse already imported at module level)
                 parsed_url = urlparse(request.url)
                 domain = parsed_url.netloc.replace('www.', '')
                 display_name = f"scraped_{domain}_{os.path.basename(tmp_path)}.md"
