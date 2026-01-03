@@ -1478,25 +1478,28 @@ async def delete_file(file_id: str):
     if not db.railway_db:
         raise HTTPException(status_code=500, detail="Database not available")
 
-    # Try to find the file by database ID
+    # Try to find the file by database ID - track which table it came from
     file_record = await db.railway_db.fetchrow(
-        "SELECT gemini_file_name, cloudflare_r2_key FROM file_uploads WHERE id = $1",
+        "SELECT gemini_file_name, cloudflare_r2_key, 'file_uploads' as table_name FROM file_uploads WHERE id = $1",
         file_id
     )
+    table_name = 'file_uploads'
 
     if not file_record:
         # Try scraped_websites table as well
         file_record = await db.railway_db.fetchrow(
-            "SELECT gemini_file_name, cloudflare_r2_key FROM scraped_websites WHERE id = $1",
+            "SELECT gemini_file_name, cloudflare_r2_key, 'scraped_websites' as table_name FROM scraped_websites WHERE id = $1",
             file_id
         )
+        if file_record:
+            table_name = 'scraped_websites'
 
     if not file_record or not file_record.get('gemini_file_name'):
         logger.warning(f"File with ID {file_id} not found in database")
         raise HTTPException(status_code=404, detail="File not found in database")
 
     gemini_file_name = file_record['gemini_file_name']
-    logger.info(f"🗑️ Found file in database: gemini_file_name = '{gemini_file_name}'")
+    logger.info(f"🗑️ Found file in database: gemini_file_name = '{gemini_file_name}', table = '{table_name}'")
 
     # Track deletion results for each storage layer
     deletion_results = {
@@ -1530,19 +1533,34 @@ async def delete_file(file_id: str):
     # Step 3: Delete from database (no rollback on failure)
     if db.railway_db:
         try:
-            # Delete the file record by ID (we already know which table it came from)
-            if 'original_filename' in file_record:  # From file_uploads table
+            # Delete the file record by ID using the tracked table name
+            if table_name == 'file_uploads':
                 result = await db.railway_db.execute(
                     "DELETE FROM file_uploads WHERE id = $1",
                     file_id
                 )
                 logger.info(f"✅ Deleted from file_uploads table: {result}")
-            else:  # From scraped_websites table
+            elif table_name == 'scraped_websites':
                 result = await db.railway_db.execute(
                     "DELETE FROM scraped_websites WHERE id = $1",
                     file_id
                 )
                 logger.info(f"✅ Deleted from scraped_websites table: {result}")
+            else:
+                logger.warning(f"⚠️ Unknown table name: {table_name}, attempting both tables")
+                # Fallback: try both tables
+                try:
+                    result = await db.railway_db.execute(
+                        "DELETE FROM file_uploads WHERE id = $1",
+                        file_id
+                    )
+                    logger.info(f"✅ Deleted from file_uploads table (fallback): {result}")
+                except:
+                    result = await db.railway_db.execute(
+                        "DELETE FROM scraped_websites WHERE id = $1",
+                        file_id
+                    )
+                    logger.info(f"✅ Deleted from scraped_websites table (fallback): {result}")
 
             deletion_results["postgres"]["success"] = True
         except Exception as e:

@@ -217,6 +217,7 @@ class ScrapeRequest(BaseModel):
     wait_for: Optional[str] = None
     js_code: Optional[str] = None
     screenshot: Optional[bool] = False
+    replace_existing: Optional[bool] = False
 
 class ScrapeResponse(BaseModel):
     success: bool
