@@ -1399,20 +1399,53 @@ async def download_file(
     user_email: Optional[str] = Header(None, alias="X-User-Email")
 ):
     """
-    Download a file from private R2 storage using a signed URL redirect.
+    Download a file from private R2 storage with proper Content-Disposition headers.
 
-    This endpoint redirects to a signed URL for immediate download.
+    Streams the file content directly with download headers for reliable downloads.
     """
     try:
-        # Get signed URL
-        result = await get_file_signed_url(file_id, expiration, user_email)
+        # Get file info from database first
+        if not db.railway_db:
+            raise HTTPException(status_code=500, detail="Database not available")
 
-        # Redirect to signed URL for download
-        from fastapi.responses import RedirectResponse
-        return RedirectResponse(
-            url=result["signed_url"],
-            status_code=302,
-            headers={"Cache-Control": "private, no-cache"}
+        file_record = await db.railway_db.fetchrow(
+            "SELECT cloudflare_r2_key, original_filename, file_extension FROM file_uploads WHERE id = $1",
+            file_id
+        )
+
+        if not file_record or not file_record['cloudflare_r2_key']:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        r2_key = file_record['cloudflare_r2_key']
+        original_filename = file_record['original_filename'] or f"download{file_record['file_extension'] or ''}"
+
+        if not r2_storage:
+            from shared.utils import dependency_unavailable_error
+            raise dependency_unavailable_error("r2", "R2 storage not configured")
+
+        # Get the file content from R2
+        file_content = await r2_storage.download_file(r2_key)
+
+        # Determine MIME type
+        import mimetypes
+        content_type = mimetypes.guess_type(original_filename)[0] or 'application/octet-stream'
+
+        # Return file with proper download headers
+        from fastapi.responses import StreamingResponse
+        from io import BytesIO
+
+        # Convert bytes to stream
+        file_stream = BytesIO(file_content)
+
+        return StreamingResponse(
+            file_stream,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{original_filename}"',
+                "Cache-Control": "private, no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
         )
 
     except HTTPException:

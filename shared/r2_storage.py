@@ -174,6 +174,24 @@ class R2Storage:
         except Exception as e:
             logger.error(f"Failed to delete file from R2: {e}")
             return False
+
+    async def download_file(self, file_key: str) -> bytes:
+        """Download a file from R2 and return its content as bytes."""
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.s3_client.get_object(
+                    Bucket=self.bucket_name,
+                    Key=file_key
+                )
+            )
+            file_content = response['Body'].read()
+            logger.info(f"File downloaded from R2: {file_key} ({len(file_content)} bytes)")
+            return file_content
+        except Exception as e:
+            logger.error(f"Failed to download file from R2: {e}")
+            raise
     
     def get_file_url(self, file_key: str) -> Optional[str]:
         """Get public URL for a file key (None for private buckets)."""
