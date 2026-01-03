@@ -1232,27 +1232,36 @@ async def delete_file(file_name: str):
     """Delete a file from Gemini FileSearch, R2 storage, and database.
     
     Args:
-        file_name: The Gemini file name (e.g., 'files/xyz123' or just 'xyz123')
+        file_name: The Gemini file name. Can be:
+            - Full format: 'files/xyz123'
+            - Short format: 'xyz123' (will be prefixed with 'files/')
     """
     if not genai_client:
         from shared.utils import dependency_unavailable_error
         raise dependency_unavailable_error("gemini", "client not configured")
 
+    # Normalize the file name - Gemini expects 'files/xyz123' format
+    gemini_file_name = file_name
+    if not file_name.startswith("files/"):
+        gemini_file_name = f"files/{file_name}"
+    
+    logger.info(f"Delete request for file: {file_name} -> normalized to: {gemini_file_name}")
+
     try:
         # First, delete from Gemini FileSearch
         try:
-            genai_client.files.delete(name=file_name)
-            logger.info(f"Deleted file from Gemini FileSearch: {file_name}")
+            genai_client.files.delete(name=gemini_file_name)
+            logger.info(f"Deleted file from Gemini FileSearch: {gemini_file_name}")
         except Exception as e:
             logger.warning(f"Failed to delete from Gemini FileSearch: {e}")
 
         # Delete from Cloudflare R2 if configured and we have the key
         if r2_storage and db.railway_db:
             try:
-                # Get R2 key from database
+                # Get R2 key from database - use normalized name
                 file_record = await db.railway_db.fetchrow(
                     "SELECT cloudflare_r2_key FROM file_uploads WHERE gemini_file_name = $1",
-                    file_name
+                    gemini_file_name
                 )
 
                 if file_record and file_record['cloudflare_r2_key']:
@@ -1264,23 +1273,23 @@ async def delete_file(file_name: str):
         # Delete from database (both file_uploads and potentially scraped_websites)
         if db.railway_db:
             try:
-                # Delete from file_uploads
+                # Delete from file_uploads - use normalized name
                 deleted_uploads = await db.railway_db.execute(
                     "DELETE FROM file_uploads WHERE gemini_file_name = $1",
-                    file_name
+                    gemini_file_name
                 )
 
-                # Also check scraped_websites in case it's a scraped website
+                # Also check scraped_websites in case it's a scraped website - use normalized name
                 deleted_scraped = await db.railway_db.execute(
                     "DELETE FROM scraped_websites WHERE gemini_file_name = $1",
-                    file_name
+                    gemini_file_name
                 )
 
                 logger.info(f"Deleted from database: {deleted_uploads} file uploads, {deleted_scraped} scraped websites")
             except Exception as e:
                 logger.warning(f"Failed to delete from database: {e}")
 
-        return {"success": True, "message": f"File {file_name} deleted from all storage layers"}
+        return {"success": True, "message": f"File {gemini_file_name} deleted from all storage layers"}
 
     except Exception as e:
         logger.error(f"Error deleting file: {e}")
