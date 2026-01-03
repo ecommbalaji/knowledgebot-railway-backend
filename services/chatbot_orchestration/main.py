@@ -583,28 +583,25 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
             return []
 
         # Filter out files with unsupported MIME types for semantic search
-        # Gemini doesn't support semantic search on certain MIME types like application/octet-stream, application/xml
+        # Only allow the supported formats: Documents (.pdf, .docx, .txt), Spreadsheets (.xlsx, .csv),
+        # Presentations (.pptx), Code (.py, .js, .html, .json, .md)
         supported_mime_types = {
-            'application/pdf',
-            'text/plain',
-            'text/html',
-            'text/csv',
-            'text/markdown',
-            'text/xml',  # text/xml is supported, but application/xml is not
-            'application/json',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # docx
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # xlsx
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # pptx
-            'application/msword',  # doc
-            'application/vnd.ms-excel',  # xls
-            'application/vnd.ms-powerpoint',  # ppt
-            'image/png',
-            'image/jpeg',
-            'image/gif',
-            'image/webp',
-            'audio/mpeg',
-            'audio/wav',
-            'audio/ogg'
+            # Documents
+            'application/pdf',  # .pdf
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
+            'text/plain',  # .txt
+            # Spreadsheets
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
+            'text/csv',  # .csv
+            # Presentations
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # .pptx
+            # Code
+            'text/x-python',  # .py
+            'application/javascript',  # .js
+            'text/javascript',  # .js (alternative)
+            'text/html',  # .html
+            'application/json',  # .json
+            'text/markdown',  # .md
         }
 
         # Filter files by supported MIME types

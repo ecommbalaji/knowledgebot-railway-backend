@@ -21,38 +21,31 @@ from contextlib import asynccontextmanager
 MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1MB
 ALLOWED_FILE_EXTENSIONS = {
     # Documents
-    'pdf', 'doc', 'docx', 'txt', 'rtf', 'odt',
-    # Presentations
-    'ppt', 'pptx', 'odp',
+    'pdf', 'docx', 'txt',
     # Spreadsheets
-    'xls', 'xlsx', 'csv', 'ods',
-    # Images
-    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg',
-    # Audio
-    'mp3', 'wav', 'ogg', 'flac', 'm4a',
-    # Code/Text
-    'html', 'htm', 'json', 'xml', 'yaml', 'yml', 'md', 'markdown',
+    'xlsx', 'csv',
+    # Presentations
+    'pptx',
+    # Code
+    'py', 'js', 'html', 'json', 'md',
 }
 ALLOWED_MIME_TYPES = {
     # Documents
-    'application/pdf', 'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'text/plain', 'application/rtf', 'application/vnd.oasis.opendocument.text',
-    # Presentations
-    'application/vnd.ms-powerpoint',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'application/vnd.oasis.opendocument.presentation',
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
+    'text/plain',  # .txt
     # Spreadsheets
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'text/csv', 'application/vnd.oasis.opendocument.spreadsheet',
-    # Images
-    'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'image/svg+xml',
-    # Audio
-    'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4',
-    # Code/Text
-    'text/html', 'application/json', 'application/xml', 'text/xml',
-    'application/x-yaml', 'text/yaml', 'text/markdown',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
+    'text/csv',  # .csv
+    # Presentations
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # .pptx
+    # Code
+    'text/x-python',  # .py
+    'application/javascript',  # .js
+    'text/javascript',  # .js (alternative)
+    'text/html',  # .html
+    'application/json',  # .json
+    'text/markdown',  # .md
 }
 
 # Add shared directory to path
@@ -322,46 +315,24 @@ def detect_mime_type_from_extension(filename: str, provided_mime_type: Optional[
         return provided_mime_type
     
     # Map file extensions to MIME types (Gemini-compatible)
+    # Only supported formats: Documents (.pdf, .docx, .txt), Spreadsheets (.xlsx, .csv), 
+    # Presentations (.pptx), Code (.py, .js, .html, .json, .md)
     extension_to_mime = {
         # Documents
         'pdf': 'application/pdf',
-        'doc': 'application/msword',
         'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'txt': 'text/plain',
-        'rtf': 'application/rtf',
-        'odt': 'application/vnd.oasis.opendocument.text',
-        # Presentations
-        'ppt': 'application/vnd.ms-powerpoint',
-        'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        'odp': 'application/vnd.oasis.opendocument.presentation',
         # Spreadsheets
-        'xls': 'application/vnd.ms-excel',
         'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'csv': 'text/csv',
-        'ods': 'application/vnd.oasis.opendocument.spreadsheet',
-        # Images
-        'png': 'image/png',
-        'jpg': 'image/jpeg',
-        'jpeg': 'image/jpeg',
-        'gif': 'image/gif',
-        'webp': 'image/webp',
-        'bmp': 'image/bmp',
-        'svg': 'image/svg+xml',
-        # Audio
-        'mp3': 'audio/mpeg',
-        'wav': 'audio/wav',
-        'ogg': 'audio/ogg',
-        'flac': 'audio/flac',
-        'm4a': 'audio/mp4',
-        # Code/Text
+        # Presentations
+        'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        # Code
+        'py': 'text/x-python',
+        'js': 'application/javascript',
         'html': 'text/html',
-        'htm': 'text/html',
         'json': 'application/json',
-        'xml': 'application/xml',
-        'yaml': 'application/x-yaml',
-        'yml': 'application/x-yaml',
         'md': 'text/markdown',
-        'markdown': 'text/markdown',
     }
     
     # Extract extension
@@ -482,26 +453,23 @@ async def get_upload_constraints():
     Get file upload constraints for UI display.
     Returns maximum file size, allowed extensions, and MIME types.
     """
-    # Format file extensions for display (prioritize JPEG and PNG)
-    image_extensions = ['jpg', 'jpeg', 'png'] + [ext for ext in ALLOWED_FILE_EXTENSIONS if ext not in ['jpg', 'jpeg', 'png']]
-    
-    # Format MIME types for display (prioritize JPEG and PNG)
-    image_mime_types = ['image/jpeg', 'image/png'] + [mime for mime in ALLOWED_MIME_TYPES if mime not in ['image/jpeg', 'image/png']]
-    
     return {
         "max_file_size_bytes": MAX_FILE_SIZE_BYTES,
         "max_file_size_mb": 1,
         "max_file_size_display": "1 MB",
         "allowed_extensions": sorted(ALLOWED_FILE_EXTENSIONS),
         "allowed_mime_types": sorted(ALLOWED_MIME_TYPES),
-        "supported_image_formats": ["JPEG", "PNG"],  # Explicitly highlight JPEG and PNG
         "supported_formats": {
-            "images": ["JPEG", "PNG", "GIF", "WebP", "BMP", "SVG"],
-            "documents": ["PDF", "DOC", "DOCX", "TXT", "RTF", "ODT"],
-            "presentations": ["PPT", "PPTX", "ODP"],
-            "spreadsheets": ["XLS", "XLSX", "CSV", "ODS"],
-            "audio": ["MP3", "WAV", "OGG", "FLAC", "M4A"],
-            "code": ["HTML", "JSON", "XML", "YAML", "Markdown"]
+            "documents": ["PDF", "DOCX", "TXT"],
+            "spreadsheets": ["XLSX", "CSV"],
+            "presentations": ["PPTX"],
+            "code": ["PY", "JS", "HTML", "JSON", "MD"]
+        },
+        "supported_extensions": {
+            "documents": [".pdf", ".docx", ".txt"],
+            "spreadsheets": [".xlsx", ".csv"],
+            "presentations": [".pptx"],
+            "code": [".py", ".js", ".html", ".json", ".md"]
         }
     }
 
