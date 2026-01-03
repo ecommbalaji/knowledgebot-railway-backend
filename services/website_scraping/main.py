@@ -277,15 +277,19 @@ async def scrape_website(request: ScrapeRequest):
             existing_website = await shared_db.railway_db.fetchrow(
                 """
                 SELECT id, original_url, gemini_file_name, COALESCE(version, 1) as version
-                FROM scraped_websites 
+                FROM scraped_websites
                 WHERE original_url = $1 OR domain = $2
                 ORDER BY version DESC, created_at DESC
                 LIMIT 1
                 """,
                 request.url, domain
             )
-            
+
+            logger.info(f"URL check: request.url={request.url}, domain={domain}, replace_existing={request.replace_existing}")
+            logger.info(f"Found existing_website: {existing_website}")
+
             if existing_website and not request.replace_existing:
+                logger.info(f"Raising 409 because existing_website found and replace_existing is False")
                 raise HTTPException(
                     status_code=409,
                     detail={
@@ -299,6 +303,7 @@ async def scrape_website(request: ScrapeRequest):
             if existing_website and request.replace_existing:
                 existing_version = existing_website['version'] + 1
                 logger.info(f"Replacing existing website: {existing_website['original_url']} (version {existing_website['version']} -> {existing_version})")
+                logger.info(f"Proceeding with rescraping since replace_existing=True")
                 # Delete the old Gemini file
                 if existing_website['gemini_file_name'] and genai_client:
                     try:
