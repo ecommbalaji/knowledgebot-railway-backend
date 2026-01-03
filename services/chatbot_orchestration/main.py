@@ -576,17 +576,51 @@ async def search_knowledge_base(query: Annotated[str, "The search query to find 
             
         # Filter for ACTIVE files only
         active_files = [f for f in all_files if f.state.name == "ACTIVE"]
-        
+
         if not active_files:
             logger.warning("No ACTIVE files found in FileSearch store")
             return []
-            
+
+        # Filter out files with unsupported MIME types for semantic search
+        # Gemini doesn't support semantic search on application/octet-stream files
+        supported_mime_types = {
+            'application/pdf',
+            'text/plain',
+            'text/html',
+            'text/csv',
+            'text/markdown',
+            'text/xml',
+            'application/json',
+            'application/xml',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # docx
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # xlsx
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # pptx
+            'application/msword',  # doc
+            'application/vnd.ms-excel',  # xls
+            'application/vnd.ms-powerpoint',  # ppt
+            'image/png',
+            'image/jpeg',
+            'image/gif',
+            'image/webp',
+            'audio/mpeg',
+            'audio/wav',
+            'audio/ogg'
+        }
+
+        # Filter files by supported MIME types
+        supported_files = [f for f in active_files if getattr(f, 'mime_type', None) in supported_mime_types]
+
+        if not supported_files:
+            logger.warning("No files with supported MIME types found for semantic search")
+            return []
+
+        logger.info(f"Found {len(supported_files)} files with supported MIME types out of {len(active_files)} total ACTIVE files")
+
         # Sort by creation time (descending) to get the most recent files
-        active_files.sort(key=lambda f: f.create_time, reverse=True)
-        
-        # Use simple heuristic: take up to 5 most recent files to avoid payload limits during debugging
-        # In a real app, you might filter by name or metadata
-        files_to_search = active_files[:5]
+        supported_files.sort(key=lambda f: f.create_time, reverse=True)
+
+        # Use simple heuristic: take up to 5 most recent files to avoid payload limits
+        files_to_search = supported_files[:5]
         
         logger.info(f"Searching {len(files_to_search)} files with Gemini 2.5 Flash Lite for query: {query}")
 
