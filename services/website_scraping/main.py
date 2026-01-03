@@ -488,8 +488,27 @@ async def scrape_website(request: ScrapeRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error scraping website: {e}")
-        raise HTTPException(status_code=500, detail=f"Scraping failed: {str(e)}")
+        error_msg = str(e)
+        logger.error(f"Error scraping website: {error_msg}")
+
+        # Provide user-friendly error messages for common issues
+        if "ERR_NAME_NOT_RESOLVED" in error_msg:
+            user_friendly_msg = "Unable to access the website. Please check that the URL is correct and the website is accessible."
+        elif "ERR_INTERNET_DISCONNECTED" in error_msg:
+            user_friendly_msg = "Internet connection issue. Please check your connection and try again."
+        elif "TimeoutError" in error_msg or "timeout" in error_msg.lower():
+            user_friendly_msg = "Website took too long to respond. The site might be slow or temporarily unavailable."
+        elif "403" in error_msg or "Forbidden" in error_msg:
+            user_friendly_msg = "Access to the website is blocked. The site might have anti-scraping measures."
+        elif "404" in error_msg or "Not Found" in error_msg:
+            user_friendly_msg = "The webpage was not found. Please check that the URL is correct."
+        else:
+            user_friendly_msg = "An error occurred while scraping the website. Please try again later."
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Scraping failed: {user_friendly_msg} (Technical details: {error_msg})"
+        )
 
 
 if __name__ == "__main__":
